@@ -16,7 +16,7 @@ use oak_core::{PixelFormat, Rational, TimeRange};
 /// `repr(C)` mirror of oak-core's `Rational`: always reduced with a
 /// non-negative denominator; `0/0` is the null/invalid sentinel.
 #[repr(C)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct OakRational {
 	pub num: i64,
 	pub den: i64,

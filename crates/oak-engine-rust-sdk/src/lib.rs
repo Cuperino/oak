@@ -7,6 +7,8 @@
 
 pub mod audio;
 pub mod codec;
+pub mod node;
+pub mod plugin;
 pub mod color;
 pub mod state;
 pub mod types;

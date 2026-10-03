@@ -107,9 +107,12 @@ impl NodeBehavior for FolderBehavior {
 		&[Category::Timeline]
 	}
 
-	/// Deep copy (C++ `copy()`).
+	/// Deep copy (C++ `copy()`): the children list comes along — the bin
+	/// tree survives `Project::deep_copy`.
 	fn duplicate(&self, _core: &NodeCore) -> Option<Box<dyn NodeBehavior>> {
-		Some(Box::new(FolderBehavior::new(&self.name)))
+		let mut copy = FolderBehavior::new(&self.name);
+		copy.children.clone_from(&self.children);
+		Some(Box::new(copy))
 	}
 
 	/// Custom project save: the bin children (C++ attaches children

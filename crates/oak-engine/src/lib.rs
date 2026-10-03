@@ -5,4 +5,6 @@ pub mod corestate;
 pub mod coretypes;
 pub mod coreutil;
 pub mod handle;
+pub mod node;
+pub mod plugin;
 pub mod vecs;
