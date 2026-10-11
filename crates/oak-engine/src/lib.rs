@@ -11,4 +11,7 @@ pub mod otio;
 pub mod plugin;
 pub mod render;
 pub mod storage;
+pub mod task;
+pub mod timeline;
+pub mod undo;
 pub mod vecs;

@@ -175,6 +175,11 @@ unsafe extern "C" {
 	fn oak_undo_can_redo() -> bool;
 	fn oak_undo_count() -> i64;
 	fn oak_undo_index() -> i64;
+	fn oak_undo_jump(index: i64) -> bool;
+	fn oak_undo_clear() -> bool;
+	fn oak_undo_command_name(row: i64, buf: *mut u8, buf_len: usize) -> i32;
+	fn oak_undo_command_done(row: i64) -> i32;
+	fn oak_undo_add_observer(cb: Option<UndoObserverFn>, userdata: *mut c_void);
 }
 
 /// A node identity token (packed generational id). `INVALID` names no
@@ -191,7 +196,7 @@ impl NodeId {
 		unsafe { oak_node_id_is_valid(self.0) }
 	}
 
-	fn from_raw(raw: u64) -> NodeId {
+	pub(crate) fn from_raw(raw: u64) -> NodeId {
 		NodeId(raw)
 	}
 
@@ -821,9 +826,87 @@ pub fn undo_index() -> i64 {
 	unsafe { oak_undo_index() }
 }
 
+/// Jumps to history position `index` (undoing/redoing as needed).
+pub fn undo_jump(index: i64) -> bool {
+	unsafe { oak_undo_jump(index) }
+}
+
+/// Clears the undo stack (leaving the fresh "new project" row).
+pub fn undo_clear() -> bool {
+	unsafe { oak_undo_clear() }
+}
+
+/// The display name of history row `row`; None when out of range.
+pub fn undo_command_name(row: i64) -> Option<String> {
+	string_out(|buf, len| unsafe { oak_undo_command_name(row, buf, len) })
+}
+
+/// Whether history row `row` is currently done; None when out of range.
+pub fn undo_command_done(row: i64) -> Option<bool> {
+	match unsafe { oak_undo_command_done(row) } {
+		0 => Some(false),
+		1 => Some(true),
+		_ => None,
+	}
+}
+
+type UndoObserverFn = unsafe extern "C" fn(userdata: *mut c_void);
+
+// Registered observers (double-boxed closures; the engine hands the
+// pointer back as userdata). Registration-only, matching the engine.
+static UNDO_OBSERVERS: std::sync::Mutex<Vec<usize>> = std::sync::Mutex::new(Vec::new());
+
+/// Registers a change observer: called after any undoable command lands
+/// (push, undo, redo, jump, clear) — the "project modified" signal.
+/// Registration-only (no removal).
+pub fn add_undo_observer(f: impl Fn() + Send + 'static) {
+	unsafe extern "C" fn trampoline(userdata: *mut c_void) {
+		if userdata.is_null() {
+			return;
+		}
+		let f = unsafe { &**(userdata as *const Box<dyn Fn() + Send>) };
+		f();
+	}
+	let boxed = Box::into_raw(Box::new(Box::new(f) as Box<dyn Fn() + Send>));
+	UNDO_OBSERVERS
+		.lock()
+		.unwrap_or_else(|e| e.into_inner())
+		.push(boxed as usize);
+	unsafe { oak_undo_add_observer(Some(trampoline), boxed as *mut c_void) };
+}
+
 #[cfg(test)]
 mod tests {
 	use super::*;
+
+	/// History navigation/inspection and the observer hook (the undo
+	/// stack is process-global; serialize).
+	static UNDO_SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+	#[test]
+	fn undo_history_rows_and_observer() {
+		let _guard = UNDO_SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+		static SEEN: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+		add_undo_observer(|| {
+			SEEN.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+		});
+
+		let project = Project::new();
+		let base = undo_count();
+		project.create_folder(project.root(), "Observed").expect("folder");
+		assert_eq!(undo_count(), base + 1);
+		assert!(SEEN.load(std::sync::atomic::Ordering::SeqCst) > 0);
+
+		assert!(undo_command_name(base).is_some());
+		assert_eq!(undo_command_done(base), Some(true));
+		assert!(undo_jump(base));
+		assert_eq!(undo_command_done(base), Some(false));
+		assert!(undo_jump(base + 1));
+		assert_eq!(undo_command_done(base), Some(true));
+
+		assert!(undo_clear());
+		assert_eq!(undo_count(), 1, "clear leaves the fresh empty row");
+	}
 
 	#[test]
 	fn project_basics_and_node_ids() {

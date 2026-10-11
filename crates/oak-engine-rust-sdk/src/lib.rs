@@ -15,6 +15,8 @@ pub mod plugin;
 pub mod render;
 pub mod state;
 pub mod storage;
+pub mod task;
+pub mod timeline;
 pub mod types;
 pub mod utils;
 pub mod vecs;
