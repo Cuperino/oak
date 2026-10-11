@@ -57,6 +57,19 @@ unsafe extern "C" {
 	fn oak_sequence_track_list_count(project: *const c_void, id: u64) -> i32;
 	fn oak_sequence_track_list_at(project: *const c_void, id: u64, index: i32) -> u64;
 	fn oak_sequence_playhead(project: *const c_void, id: u64) -> Rational;
+	fn oak_sequence_length(project: *const c_void, id: u64) -> Rational;
+	fn oak_sequence_frame_rate(project: *const c_void, id: u64) -> Rational;
+	fn oak_sequence_geometry(project: *const c_void, id: u64, width: *mut i32, height: *mut i32) -> bool;
+	fn oak_sequence_set_video_params(
+		project: *const c_void,
+		id: u64,
+		width: i32,
+		height: i32,
+		frame_rate_num: i32,
+		frame_rate_den: i32,
+	) -> bool;
+	fn oak_node_label(project: *const c_void, id: u64, buf: *mut u8, buf_len: usize) -> i32;
+	fn oak_node_set_label(project: *const c_void, id: u64, label: *const u8, label_len: usize) -> bool;
 	fn oak_tracklist_kind(project: *const c_void, id: u64) -> i32;
 	fn oak_tracklist_track_count(project: *const c_void, id: u64) -> i32;
 	fn oak_tracklist_track_at(project: *const c_void, id: u64, index: i32) -> u64;
@@ -423,6 +436,58 @@ impl Project {
 	/// The sequence playhead (rational seconds).
 	pub fn sequence_playhead(&self, sequence: NodeId) -> Rational {
 		unsafe { oak_sequence_playhead(self.ptr, sequence.0) }
+	}
+
+	/// The sequence's length.
+	pub fn sequence_length(&self, sequence: NodeId) -> Rational {
+		unsafe { oak_sequence_length(self.ptr, sequence.0) }
+	}
+
+	/// The sequence's frame rate (the null rational when it has no
+	/// video params).
+	pub fn sequence_frame_rate(&self, sequence: NodeId) -> Rational {
+		unsafe { oak_sequence_frame_rate(self.ptr, sequence.0) }
+	}
+
+	/// The sequence's output geometry (width, height); None when it has
+	/// no video params.
+	pub fn sequence_geometry(&self, sequence: NodeId) -> Option<(i32, i32)> {
+		let (mut w, mut h) = (0, 0);
+		unsafe { oak_sequence_geometry(self.ptr, sequence.0, &mut w, &mut h) }.then_some((w, h))
+	}
+
+	/// Sets the sequence's output video params (width/height/frame
+	/// rate; pixel format stays F32 RGBA).
+	pub fn sequence_set_video_params(
+		&self,
+		sequence: NodeId,
+		width: i32,
+		height: i32,
+		frame_rate_num: i32,
+		frame_rate_den: i32,
+	) -> bool {
+		unsafe {
+			oak_sequence_set_video_params(
+				self.ptr,
+				sequence.0,
+				width,
+				height,
+				frame_rate_num,
+				frame_rate_den,
+			)
+		}
+	}
+
+	/// The node's user label ("" when unset).
+	pub fn node_label(&self, id: NodeId) -> String {
+		string_out(|buf, len| unsafe { oak_node_label(self.ptr, id.0, buf, len) })
+			.unwrap_or_default()
+	}
+
+	/// Sets the node's user label (a direct write, not an undoable
+	/// edit).
+	pub fn node_set_label(&self, id: NodeId, label: &str) -> bool {
+		unsafe { oak_node_set_label(self.ptr, id.0, label.as_ptr(), label.len()) }
 	}
 
 	/// The track list's media type code (`TrackType`).
@@ -875,13 +940,17 @@ pub fn add_undo_observer(f: impl Fn() + Send + 'static) {
 	unsafe { oak_undo_add_observer(Some(trampoline), boxed as *mut c_void) };
 }
 
+/// Serializes every test that touches the process-global undo stack
+/// (all test modules in this crate share it).
+#[cfg(test)]
+pub(crate) static UNDO_SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 #[cfg(test)]
 mod tests {
 	use super::*;
 
 	/// History navigation/inspection and the observer hook (the undo
 	/// stack is process-global; serialize).
-	static UNDO_SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 	#[test]
 	fn undo_history_rows_and_observer() {
@@ -906,6 +975,27 @@ mod tests {
 
 		assert!(undo_clear());
 		assert_eq!(undo_count(), 1, "clear leaves the fresh empty row");
+	}
+
+	#[test]
+	fn node_label_and_sequence_params() {
+		let _guard = UNDO_SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+		let project = Project::new();
+		let folder = project.create_folder(project.root(), "Labeled").expect("folder");
+		assert_eq!(project.node_label(folder), "Labeled");
+		assert!(project.node_set_label(folder, "Renamed"));
+		assert_eq!(project.node_label(folder), "Renamed");
+		assert!(!project.node_set_label(NodeId::INVALID, "x"));
+
+		let seq = project.create_sequence("Seq").expect("sequence");
+		// A fresh sequence carries the default 29.97 fps video params.
+		assert_eq!(project.sequence_frame_rate(seq), Rational::new(30000, 1001));
+		assert!(project.sequence_geometry(seq).is_some());
+		assert!(project.sequence_set_video_params(seq, 1920, 1080, 24, 1));
+		assert_eq!(project.sequence_frame_rate(seq), Rational::new(24, 1));
+		assert_eq!(project.sequence_geometry(seq), Some((1920, 1080)));
+		assert!(!project.sequence_set_video_params(NodeId::INVALID, 1, 1, 1, 1));
+		assert!(undo_clear());
 	}
 
 	#[test]
@@ -976,7 +1066,6 @@ mod edit_tests {
 	use crate::codec::Frame;
 
 	// The undo stack is process-global; serialize the edit tests.
-	static UNDO_SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 	/// A real 64x64 clip encoded through the SDK (the encode session
 	/// doubles as test-media generation).
@@ -1090,7 +1179,6 @@ mod edit_tests {
 mod persist_tests {
 	use super::*;
 
-	static UNDO_SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 	#[test]
 	fn save_load_roundtrip() {

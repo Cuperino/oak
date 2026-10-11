@@ -383,9 +383,11 @@ mod tests {
 	/// C ABI.
 	#[test]
 	fn split_and_edit_commands_are_undoable() {
-		// Serialize: the undo stack is process-global.
-		static SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
-		let _guard = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+		// Serialize: the undo stack is process-global (shared with the
+		// node tests).
+		let _guard = crate::node::UNDO_SERIAL
+			.lock()
+			.unwrap_or_else(|e| e.into_inner());
 		unsafe {
 			let (project, _seq, track, block) = project_with_clip();
 			let base = crate::node::oak_undo_count();
@@ -454,8 +456,9 @@ mod tests {
 	/// Track add/remove through the C ABI.
 	#[test]
 	fn add_and_remove_track() {
-		static SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
-		let _guard = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+		let _guard = crate::node::UNDO_SERIAL
+			.lock()
+			.unwrap_or_else(|e| e.into_inner());
 		unsafe {
 			let project = crate::node::oak_project_new();
 			let (s, sl) = arg("Seq");

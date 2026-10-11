@@ -399,8 +399,11 @@ mod tests {
 	/// project comes back as an engine handle.
 	#[test]
 	fn save_then_load_otio_roundtrip() {
-		// The tasks are registry-global but independent; keep them out of
-		// each other's way anyway (filenames are per-process).
+		// The save/load path pushes undo entries (clip placement);
+		// serialize against the other undo-stack tests.
+		let _guard = crate::node::UNDO_SERIAL
+			.lock()
+			.unwrap_or_else(|e| e.into_inner());
 		unsafe {
 			let path = std::env::temp_dir()
 				.join(format!("oakengine_task_{}.otio", std::process::id()))

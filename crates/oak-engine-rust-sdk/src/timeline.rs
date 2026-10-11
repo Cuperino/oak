@@ -227,8 +227,9 @@ mod tests {
 	#[test]
 	fn split_is_one_undoable_step() {
 		// Serialize: the undo stack is process-global.
-		static SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
-		let _guard = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+		let _guard = crate::node::UNDO_SERIAL
+			.lock()
+			.unwrap_or_else(|e| e.into_inner());
 
 		let project = Project::new();
 		let sequence = project.create_sequence("Seq").expect("sequence");
@@ -256,8 +257,9 @@ mod tests {
 	/// Track add/remove.
 	#[test]
 	fn add_and_remove_track() {
-		static SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
-		let _guard = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+		let _guard = crate::node::UNDO_SERIAL
+			.lock()
+			.unwrap_or_else(|e| e.into_inner());
 
 		let project = Project::new();
 		let sequence = project.create_sequence("Seq").expect("sequence");

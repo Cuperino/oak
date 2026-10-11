@@ -19,6 +19,83 @@ use crate::coretypes::OakRational;
 use crate::handle::NativeMirror;
 use crate::node::ProjectHandle;
 
+// ---------------------------------------------------------------------------
+// Render manager lifecycle
+// ---------------------------------------------------------------------------
+
+/// `oak_render_manager_init` backend: the `OAK_PIPELINE` environment
+/// default (the process pool unless overridden).
+pub const OAK_RENDER_BACKEND_DEFAULT: i32 = 0;
+/// `oak_render_manager_init` backend: the test-only inline backend
+/// (jobs run synchronously on the calling thread; the only backend
+/// that works without the oak-worker binary — e.g. a plugin process).
+pub const OAK_RENDER_BACKEND_THREADS: i32 = 1;
+/// `oak_render_manager_init` backend: the M1 thread pipeline
+/// (one render thread + one decode thread, in-process).
+pub const OAK_RENDER_BACKEND_PIPELINE: i32 = 2;
+/// `oak_render_manager_init` backend: the process-isolated oak-worker
+/// pool (needs the oak-worker binary).
+pub const OAK_RENDER_BACKEND_PROCESSES: i32 = 3;
+
+/// Initializes the process-wide render manager with the chosen backend
+/// (one of `OAK_RENDER_BACKEND_*`). The render/export tasks
+/// (`oak_task_export`) need a manager — or a worker pool — to render.
+/// False when already initialized or on an invalid backend.
+#[unsafe(no_mangle)]
+pub extern "C" fn oak_render_manager_init(backend: i32) -> bool {
+	use oak_render::manager::{RenderBackendChoice, RenderManager};
+	let choice = match backend {
+		OAK_RENDER_BACKEND_DEFAULT => return RenderManager::init().is_ok(),
+		OAK_RENDER_BACKEND_THREADS => RenderBackendChoice::Threads,
+		OAK_RENDER_BACKEND_PIPELINE => RenderBackendChoice::Pipeline,
+		OAK_RENDER_BACKEND_PROCESSES => RenderBackendChoice::Processes(Default::default()),
+		_ => return false,
+	};
+	RenderManager::init_with_backend(choice).is_ok()
+}
+
+/// Whether the render manager is initialized.
+#[unsafe(no_mangle)]
+pub extern "C" fn oak_render_manager_is_initialized() -> bool {
+	oak_render::manager::RenderManager::global().is_some()
+}
+
+/// Shuts the render manager down (drains pending work). No-op when not
+/// initialized.
+#[unsafe(no_mangle)]
+pub extern "C" fn oak_render_manager_shutdown() {
+	oak_render::manager::RenderManager::shutdown();
+}
+
+/// Installs the text measure/render backends (idempotent; text nodes
+/// render empty without them).
+#[unsafe(no_mangle)]
+pub extern "C" fn oak_render_textengine_install() {
+	oak_render::textengine::install();
+}
+
+/// Swizzles BGRA8 pixels to RGBA8 (`src` and `dst` may not overlap);
+/// both buffers are `pixel_count*4` bytes. False on invalid input.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn oak_render_swizzle_bgra8_to_rgba8(
+	src: *const u8,
+	dst: *mut u8,
+	pixel_count: usize,
+) -> bool {
+	if src.is_null() || dst.is_null() {
+		return false;
+	}
+	let src = unsafe { std::slice::from_raw_parts(src, pixel_count * 4) };
+	let dst = unsafe { std::slice::from_raw_parts_mut(dst, pixel_count * 4) };
+	for (s, d) in src.chunks_exact(4).zip(dst.chunks_exact_mut(4)) {
+		d[0] = s[2]; // R
+		d[1] = s[1]; // G
+		d[2] = s[0]; // B
+		d[3] = s[3]; // A
+	}
+	true
+}
+
 /// Renders the frame of the viewer node `viewer` (a node id token, see
 /// `oak_project_root`/`oak_node_*` traversal) at `time` into `dst` as
 /// tight F32 RGBA (`width*height*4` floats). Returns the float count
@@ -165,6 +242,34 @@ mod tests {
 			);
 			crate::node::oak_project_release(project);
 		}
+	}
+
+	/// Manager lifecycle + swizzle + textengine install.
+	#[test]
+	fn manager_lifecycle_and_swizzle() {
+		// The manager may already be initialized (the export test);
+		// either way a second init is rejected and invalid backends fail.
+		let was = oak_render_manager_is_initialized();
+		if !was {
+			assert!(oak_render_manager_init(OAK_RENDER_BACKEND_THREADS));
+		}
+		assert!(oak_render_manager_is_initialized());
+		assert!(
+			!oak_render_manager_init(OAK_RENDER_BACKEND_THREADS),
+			"double init rejected"
+		);
+		assert!(!oak_render_manager_init(99), "invalid backend rejected");
+		oak_render_textengine_install();
+		oak_render_textengine_install();
+		// No shutdown: other tests may be using the manager.
+
+		let src = [10u8, 20, 30, 255, 1, 2, 3, 4];
+		let mut dst = [0u8; 8];
+		assert!(unsafe { oak_render_swizzle_bgra8_to_rgba8(src.as_ptr(), dst.as_mut_ptr(), 2) });
+		assert_eq!(dst, [30, 20, 10, 255, 3, 2, 1, 4]);
+		assert!(!unsafe {
+			oak_render_swizzle_bgra8_to_rgba8(std::ptr::null(), dst.as_mut_ptr(), 2)
+		});
 	}
 
 	#[test]

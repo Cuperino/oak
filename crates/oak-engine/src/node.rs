@@ -724,6 +724,176 @@ fn read_value(
 // ---------------------------------------------------------------------------
 
 /// Whether the global undo stack can undo.
+/// The node's user label, snprintf-style; -1 on a null handle or
+/// unknown id.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn oak_node_label(
+	project: *const ProjectHandle,
+	id: u64,
+	buf: *mut u8,
+	buf_len: usize,
+) -> i32 {
+	let Some(id) = NodeId::from_identity(id) else {
+		return -1;
+	};
+	match with_project(project, |g| g.graph.get(id).map(|e| e.core.label.clone())).flatten() {
+		Some(label) => copy_str_out(&label, buf, buf_len),
+		None => -1,
+	}
+}
+
+/// Sets the node's user label (a direct graph write, not an undoable
+/// edit — matching `oak_task::nodeops::set_node_label`). False on a null
+/// handle, unknown id, or invalid input.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn oak_node_set_label(
+	project: *const ProjectHandle,
+	id: u64,
+	label: *const u8,
+	label_len: usize,
+) -> bool {
+	let Some(id) = NodeId::from_identity(id) else {
+		return false;
+	};
+	let Some(label) = (unsafe { str_arg(label, label_len) }) else {
+		return false;
+	};
+	with_project_mut(project, |g| {
+		let Some(entry) = g.graph.get_mut(id) else {
+			return false;
+		};
+		entry.core.label = label.to_string();
+		true
+	})
+	.unwrap_or(false)
+}
+
+/// The sequence's length (its `last_length`); the null rational (0/0)
+/// on a null handle, a non-sequence id, or an unset length.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn oak_sequence_length(
+	project: *const ProjectHandle,
+	id: u64,
+) -> OakRational {
+	let Some(id) = NodeId::from_identity(id) else {
+		return OakRational::default();
+	};
+	with_project(project, |g| {
+		g.graph
+			.get(id)
+			.and_then(|e| e.behavior.as_any())
+			.and_then(|a| a.downcast_ref::<SequenceBehavior>())
+			.map(|s| OakRational::from_native(&s.last_length))
+	})
+	.flatten()
+	.unwrap_or_default()
+}
+
+/// The sequence's frame rate (its first video stream); the null
+/// rational (0/0) when it has no video params.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn oak_sequence_frame_rate(
+	project: *const ProjectHandle,
+	id: u64,
+) -> OakRational {
+	let Some(id) = NodeId::from_identity(id) else {
+		return OakRational::default();
+	};
+	with_project(project, |g| {
+		g.graph
+			.get(id)
+			.and_then(|e| e.behavior.as_any())
+			.and_then(|a| a.downcast_ref::<SequenceBehavior>())
+			.and_then(|s| s.video_params.first())
+			.map(|v| OakRational::from_native(&v.frame_rate))
+	})
+	.flatten()
+	.unwrap_or_default()
+}
+
+/// The sequence's output geometry (its first video stream). False on a
+/// null handle, a non-sequence id, or no video params.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn oak_sequence_geometry(
+	project: *const ProjectHandle,
+	id: u64,
+	width: *mut i32,
+	height: *mut i32,
+) -> bool {
+	let Some(id) = NodeId::from_identity(id) else {
+		return false;
+	};
+	let params = with_project(project, |g| {
+		g.graph
+			.get(id)
+			.and_then(|e| e.behavior.as_any())
+			.and_then(|a| a.downcast_ref::<SequenceBehavior>())
+			.and_then(|s| s.video_params.first())
+			.map(|v| (v.width, v.height))
+	})
+	.flatten();
+	let Some((w, h)) = params else {
+		return false;
+	};
+	if !width.is_null() {
+		unsafe { *width = w };
+	}
+	if !height.is_null() {
+		unsafe { *height = h };
+	}
+	true
+}
+
+/// Sets the sequence's output video params (width/height/frame rate;
+/// pixel format stays F32 RGBA). False on a null handle or a
+/// non-sequence id.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn oak_sequence_set_video_params(
+	project: *const ProjectHandle,
+	id: u64,
+	width: i32,
+	height: i32,
+	frame_rate_num: i32,
+	frame_rate_den: i32,
+) -> bool {
+	let Some(id) = NodeId::from_identity(id) else {
+		return false;
+	};
+	with_project_mut(project, |g| {
+		let Some(s) = g
+			.graph
+			.get_mut(id)
+			.and_then(|e| e.behavior.as_any_mut())
+			.and_then(|a| a.downcast_mut::<SequenceBehavior>())
+		else {
+			return false;
+		};
+		if s.video_params.is_empty() {
+			s.video_params.push(oak_node::value::VideoParams {
+				width,
+				height,
+				frame_rate: oak_core::Rational::new(
+					i64::from(frame_rate_num),
+					i64::from(frame_rate_den),
+				),
+				pixel_format: oak_core::PixelFormat::F32 as i32,
+				channels: 4,
+				interlaced: false,
+			});
+		} else {
+			let v = &mut s.video_params[0];
+			v.width = width;
+			v.height = height;
+			v.frame_rate = oak_core::Rational::new(
+				i64::from(frame_rate_num),
+				i64::from(frame_rate_den),
+			);
+		}
+		true
+	})
+	.unwrap_or(false)
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn oak_undo_can_undo() -> bool {
 	oak_undo::global::can_undo()
@@ -750,7 +920,7 @@ pub extern "C" fn oak_undo_index() -> i64 {
 /// Serializes every test that touches the process-global undo stack
 /// (all three test modules in this file share it).
 #[cfg(test)]
-static UNDO_SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
+pub(crate) static UNDO_SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 #[cfg(test)]
 mod tests {
@@ -812,6 +982,46 @@ mod tests {
 			assert!(!oak_project_modified(project));
 
 			oak_project_release(project);
+		}
+	}
+
+	/// Node labels and sequence introspection through the C ABI.
+	#[test]
+	fn node_label_and_sequence_params() {
+		// Folder creation is undoable; serialize against the other
+		// undo-stack tests.
+		let _guard = UNDO_SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+		unsafe {
+			let project = oak_project_new();
+			let root = oak_project_root(project);
+			let (n, nl) = ("Labeled".as_ptr(), 7);
+			let folder = oak_folder_create(project, root, n, nl);
+			assert!(oak_node_id_is_valid(folder));
+
+			let mut buf = [0u8; 64];
+			let len = oak_node_label(project, folder, buf.as_mut_ptr(), buf.len());
+			assert_eq!(std::str::from_utf8(&buf[..len as usize]).unwrap(), "Labeled");
+			assert!(oak_node_set_label(project, folder, "Renamed".as_ptr(), 7));
+			let len = oak_node_label(project, folder, buf.as_mut_ptr(), buf.len());
+			assert_eq!(std::str::from_utf8(&buf[..len as usize]).unwrap(), "Renamed");
+			assert_eq!(oak_node_label(project, u64::MAX, buf.as_mut_ptr(), 64), -1);
+			assert!(!oak_node_set_label(project, u64::MAX, "x".as_ptr(), 1));
+
+			let (s, sl) = ("Seq".as_ptr(), 3);
+			let seq = oak_sequence_create(project, s, sl);
+			// A fresh sequence carries the default 29.97 fps video params.
+			assert_eq!(oak_sequence_frame_rate(project, seq), OakRational { num: 30000, den: 1001 });
+			assert!(oak_sequence_geometry(project, seq, std::ptr::null_mut(), std::ptr::null_mut()));
+			assert!(oak_sequence_set_video_params(project, seq, 1920, 1080, 24, 1));
+			assert_eq!(oak_sequence_frame_rate(project, seq), OakRational { num: 24, den: 1 });
+			let (mut w, mut h) = (0, 0);
+			assert!(oak_sequence_geometry(project, seq, &mut w, &mut h));
+			assert_eq!((w, h), (1920, 1080));
+			assert_eq!(oak_sequence_length(project, seq), OakRational { num: 0, den: 1 });
+			assert!(!oak_sequence_set_video_params(project, u64::MAX, 1, 1, 1, 1));
+
+			oak_project_release(project);
+			assert!(oak_undo::global::clear().is_ok());
 		}
 	}
 

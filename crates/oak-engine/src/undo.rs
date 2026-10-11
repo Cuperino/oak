@@ -93,9 +93,11 @@ mod tests {
 
 	#[test]
 	fn history_rows_and_observer() {
-		// Serialize: the undo stack is process-global.
-		static SERIAL: Mutex<()> = Mutex::new(());
-		let _guard = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+		// Serialize: the undo stack is process-global (shared with the
+		// node tests).
+		let _guard = crate::node::UNDO_SERIAL
+			.lock()
+			.unwrap_or_else(|e| e.into_inner());
 
 		static SEEN: AtomicUsize = AtomicUsize::new(0);
 		unsafe extern "C" fn observer(userdata: *mut c_void) {

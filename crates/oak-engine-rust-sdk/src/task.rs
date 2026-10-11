@@ -196,6 +196,11 @@ mod tests {
 	/// Save → load round-trip through the task path.
 	#[test]
 	fn save_then_load_otio_roundtrip() {
+		// The setup pushes undo entries (clip placement); serialize
+		// against the other undo-stack tests.
+		let _guard = crate::node::UNDO_SERIAL
+			.lock()
+			.unwrap_or_else(|e| e.into_inner());
 		let path = std::env::temp_dir()
 			.join(format!("oaksdk_task_{}.otio", std::process::id()))
 			.to_string_lossy()

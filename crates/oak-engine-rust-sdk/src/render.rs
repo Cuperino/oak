@@ -31,6 +31,11 @@ unsafe extern "C" {
 	fn oak_render_disk_cache_path(buf: *mut u8, buf_len: usize) -> i32;
 	fn oak_render_disk_cache_size() -> i64;
 	fn oak_render_disk_cache_clear() -> bool;
+	fn oak_render_manager_init(backend: i32) -> bool;
+	fn oak_render_manager_is_initialized() -> bool;
+	fn oak_render_manager_shutdown();
+	fn oak_render_textengine_install();
+	fn oak_render_swizzle_bgra8_to_rgba8(src: *const u8, dst: *mut u8, pixel_count: usize) -> bool;
 }
 
 /// Renders the frame of the viewer node `viewer` (any node id from the
@@ -82,6 +87,61 @@ pub fn disk_cache_clear() -> bool {
 	unsafe { oak_render_disk_cache_clear() }
 }
 
+/// The render backend for [`manager_init`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RenderBackend {
+	/// The `OAK_PIPELINE` environment default (the process pool unless
+	/// overridden).
+	Default,
+	/// The inline backend: jobs run synchronously on the calling
+	/// thread — the only backend that works without the oak-worker
+	/// binary (e.g. a plugin process).
+	Threads,
+	/// The M1 thread pipeline (one render thread + one decode thread,
+	/// in-process).
+	Pipeline,
+	/// The process-isolated oak-worker pool (needs the oak-worker
+	/// binary).
+	Processes,
+}
+
+/// Initializes the process-wide render manager. The render/export
+/// tasks ([`crate::task::export`]) need a manager — or a worker pool —
+/// to render. False when already initialized.
+pub fn manager_init(backend: RenderBackend) -> bool {
+	let backend = match backend {
+		RenderBackend::Default => 0,
+		RenderBackend::Threads => 1,
+		RenderBackend::Pipeline => 2,
+		RenderBackend::Processes => 3,
+	};
+	unsafe { oak_render_manager_init(backend) }
+}
+
+/// Whether the render manager is initialized.
+pub fn manager_is_initialized() -> bool {
+	unsafe { oak_render_manager_is_initialized() }
+}
+
+/// Shuts the render manager down (drains pending work).
+pub fn manager_shutdown() {
+	unsafe { oak_render_manager_shutdown() }
+}
+
+/// Installs the text measure/render backends (idempotent; text nodes
+/// render empty without them).
+pub fn textengine_install() {
+	unsafe { oak_render_textengine_install() }
+}
+
+/// Swizzles BGRA8 pixels to RGBA8 (buffers may not overlap).
+pub fn swizzle_bgra8_to_rgba8(src: &[u8], dst: &mut [u8]) -> bool {
+	if src.len() != dst.len() || !src.len().is_multiple_of(4) {
+		return false;
+	}
+	unsafe { oak_render_swizzle_bgra8_to_rgba8(src.as_ptr(), dst.as_mut_ptr(), src.len() / 4) }
+}
+
 #[cfg(test)]
 mod tests {
 	use super::*;
@@ -104,5 +164,24 @@ mod tests {
 	fn disk_cache_entry_points_are_safe() {
 		assert!(!disk_cache_path().is_empty());
 		let _ = disk_cache_size();
+	}
+
+	#[test]
+	fn manager_and_swizzle() {
+		let was = manager_is_initialized();
+		if !was {
+			assert!(manager_init(RenderBackend::Threads));
+		}
+		assert!(manager_is_initialized());
+		assert!(
+			!manager_init(RenderBackend::Threads),
+			"double init rejected"
+		);
+
+		let src = [10u8, 20, 30, 255];
+		let mut dst = [0u8; 4];
+		assert!(swizzle_bgra8_to_rgba8(&src, &mut dst));
+		assert_eq!(dst, [30, 20, 10, 255]);
+		assert!(!swizzle_bgra8_to_rgba8(&src, &mut dst[..3]));
 	}
 }
