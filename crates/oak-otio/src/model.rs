@@ -623,6 +623,28 @@ impl Stack {
 	pub fn append_child(&mut self, child: Composable) {
 		self.children.push(Box::new(child));
 	}
+
+	/// Replace the child at `index`; false when out of range (C++
+	/// `children[index] = ...`).
+	pub fn set_child(&mut self, index: usize, child: Composable) -> bool {
+		match self.children.get_mut(index) {
+			Some(slot) => {
+				*slot = Box::new(child);
+				true
+			}
+			None => false,
+		}
+	}
+
+	/// Remove the child at `index`; false when out of range.
+	pub fn remove_child(&mut self, index: usize) -> bool {
+		if index < self.children.len() {
+			self.children.remove(index);
+			true
+		} else {
+			false
+		}
+	}
 }
 
 /// `Track.1` — a stack with a track kind. Field order on disk is
@@ -674,6 +696,27 @@ impl Track {
 	/// Append a child (C++ `append_child`).
 	pub fn append_child(&mut self, child: Composable) {
 		self.children.push(Box::new(child));
+	}
+
+	/// Replace the child at `index`; false when out of range.
+	pub fn set_child(&mut self, index: usize, child: Composable) -> bool {
+		match self.children.get_mut(index) {
+			Some(slot) => {
+				*slot = Box::new(child);
+				true
+			}
+			None => false,
+		}
+	}
+
+	/// Remove the child at `index`; false when out of range.
+	pub fn remove_child(&mut self, index: usize) -> bool {
+		if index < self.children.len() {
+			self.children.remove(index);
+			true
+		} else {
+			false
+		}
 	}
 }
 
@@ -848,6 +891,11 @@ impl Timeline {
 	/// The timeline name.
 	pub fn name(&self) -> &str {
 		&self.name
+	}
+
+	/// Set the timeline name (C++ `set_name`).
+	pub fn set_name(&mut self, name: impl Into<String>) {
+		self.name = name.into();
 	}
 
 	/// The tracks stack (C++ `tracks`).

@@ -10,6 +10,7 @@ pub mod codec;
 pub mod color;
 pub mod node;
 pub mod ofx;
+pub mod otio;
 pub mod plugin;
 pub mod state;
 pub mod types;

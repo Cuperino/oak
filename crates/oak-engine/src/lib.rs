@@ -7,5 +7,6 @@ pub mod coreutil;
 pub mod handle;
 pub mod node;
 pub mod ofx;
+pub mod otio;
 pub mod plugin;
 pub mod vecs;
