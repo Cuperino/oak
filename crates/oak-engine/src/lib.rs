@@ -9,4 +9,6 @@ pub mod node;
 pub mod ofx;
 pub mod otio;
 pub mod plugin;
+pub mod render;
+pub mod storage;
 pub mod vecs;

@@ -194,6 +194,11 @@ impl NodeId {
 	fn from_raw(raw: u64) -> NodeId {
 		NodeId(raw)
 	}
+
+	/// The raw token (crate-internal consumers: the render ABI).
+	pub(crate) fn raw(self) -> u64 {
+		self.0
+	}
 }
 
 /// A node's coarse kind.
@@ -278,6 +283,18 @@ impl Project {
 		Self {
 			ptr: unsafe { oak_project_new() },
 		}
+	}
+
+	/// Wraps a raw engine handle (crate-internal: the storage ABI hands
+	/// projects back this way). The pointer takes over one reference.
+	pub(crate) fn from_raw(ptr: *mut c_void) -> Self {
+		Self { ptr }
+	}
+
+	/// Borrows the raw engine handle (crate-internal: storage/render
+	/// calls take it as an argument).
+	pub(crate) fn as_raw(&self) -> *mut c_void {
+		self.ptr
 	}
 
 	/// The project display name.

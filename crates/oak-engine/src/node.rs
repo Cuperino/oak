@@ -47,6 +47,21 @@ pub struct ProjectHandle {
 	inner: Arc<Mutex<Project>>,
 }
 
+impl ProjectHandle {
+	/// Wraps an existing shared project as a handle with ref count 1
+	/// (the storage backend boundary hands projects over as
+	/// `Arc<Mutex<Project>>`).
+	pub(crate) fn from_arc(inner: Arc<Mutex<Project>>) -> *mut ProjectHandle {
+		crate::handle::into_ffi(ProjectHandle { inner }) as *mut ProjectHandle
+	}
+
+	/// The shared project (crate-internal consumers: storage save,
+	/// frame rendering).
+	pub(crate) fn project(&self) -> &Arc<Mutex<Project>> {
+		&self.inner
+	}
+}
+
 crate::export_handle!(
 	ProjectHandle,
 	oak_project_add_ref,

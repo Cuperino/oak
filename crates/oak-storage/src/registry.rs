@@ -73,6 +73,16 @@ impl Registry {
 		}
 	}
 
+	/// Snapshot of the registered backends as (name, URI scheme) pairs,
+	/// in registration order (the arbitration order within a scheme).
+	pub fn list(&self) -> Vec<(String, String)> {
+		let guard = lock(&self.backends);
+		guard
+			.iter()
+			.map(|b| (b.name().to_string(), b.uri_scheme().to_string()))
+			.collect()
+	}
+
 	/// First backend claiming `uri` (E_NO_BACKEND when none).
 	pub fn resolve(&self, uri: &StorageUri) -> Result<Arc<dyn StorageBackend>> {
 		let guard = lock(&self.backends);
