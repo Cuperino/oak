@@ -76,3 +76,11 @@ opt-level = 1
 # does (the ocio-rs patch pulls the fork's `ocio-sys` path dependency too).
 [patch.crates-io]
 ocio-rs = { git = "https://github.com/Mike-Solar/ocio-rs.git", rev = "30338c6a169bbbada862fb3ac256e79b656159cf" }
+# pipewire-rs 0.10's build scripts run bindgen with `clang_macro_fallback`
+# using *cwd-relative* scratch paths (.macro_eval.c / *.pch); with clang >= 23
+# the fallback evaluation silently fails and cast-valued macros
+# (SPA_ID_INVALID, PW_ID_ANY, ...) vanish from the generated bindings. The
+# vendored copies pin bindgen's `clang_macro_fallback_build_dir` to OUT_DIR
+# (absolute); drop the patch once upstream does the same.
+libspa-sys = { path = "vendor/libspa-sys" }
+pipewire-sys = { path = "vendor/pipewire-sys" }

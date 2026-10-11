@@ -331,6 +331,14 @@ cmake_build x265 \
 	https://bitbucket.org/multicoreware/x265_git/get/3.6.tar.gz source \
 	-DENABLE_SHARED=OFF -DENABLE_CLI=OFF
 
+# GCC >= 15 leaks its driver-internal pseudo-library name
+# `atomic_asneeded` into the installed x265.pc (no such library exists;
+# the driver maps it internally), poisoning every downstream static link
+# line. Map it back to the real library.
+if [ -f "$PREFIX/lib/pkgconfig/x265.pc" ]; then
+	sed -i 's/-latomic_asneeded/-latomic/g' "$PREFIX/lib/pkgconfig/x265.pc"
+fi
+
 meson_build dav1d \
 	https://downloads.videolan.org/pub/videolan/dav1d/1.5.1/dav1d-1.5.1.tar.xz \
 	-Denable_tools=false -Denable_tests=false

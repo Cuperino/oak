@@ -6,5 +6,6 @@ pub mod coretypes;
 pub mod coreutil;
 pub mod handle;
 pub mod node;
+pub mod ofx;
 pub mod plugin;
 pub mod vecs;

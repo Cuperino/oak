@@ -153,9 +153,25 @@ fn main() {
 			// runtime that actually exists.
 			#[cfg(target_os = "macos")]
 			let lib = if lib == "stdc++" { "c++" } else { lib };
-			// System libs (m, z, bz2, iconv, ...) and externals alike; the
-			// linker picks .a or .dylib per -L search order.
-			println!("cargo:rustc-link-lib={lib}");
+			// Static closure: when the FFMPEG_DIR prefix ships the archive
+			// (every external built by tooling/ffmpeg/build-deps.sh), force
+			// it (`static=` accepts only lib<name>.a). A system shared
+			// library of the same name would otherwise win via another
+			// crate's -L (e.g. system-deps' /usr/lib ahead of ours), and
+			// versioned symbols (x264_encoder_open_<n>, x265_api_get_<n>)
+			// or hidden-visibility references (openjpeg's OPJ_API under
+			// OPJ_STATIC) then break the link or the runtime load when the
+			// distro package is upgraded. System libs (m, z, va, drm, X11)
+			// have no archive in the prefix and stay dynamic.
+			let archive = pc_dir
+				.parent()
+				.expect("pkgconfig dir has a parent")
+				.join(format!("lib{lib}.a"));
+			if archive.exists() {
+				println!("cargo:rustc-link-lib=static={lib}");
+			} else {
+				println!("cargo:rustc-link-lib={lib}");
+			}
 		} else if token == "-framework" {
 			// Handled on the next token (see below).
 		} else if let Some(framework) = token.strip_prefix("-framework=") {

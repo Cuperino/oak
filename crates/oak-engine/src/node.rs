@@ -1570,7 +1570,7 @@ mod edit_tests {
 	/// project.
 	#[test]
 	fn edit_chain_and_undo_rollback() {
-		let _guard = super::UNDO_SERIAL.lock().unwrap();
+		let _guard = super::UNDO_SERIAL.lock().unwrap_or_else(|e| e.into_inner());
 		unsafe {
 			let project = oak_project_new();
 			let undo_base = oak_undo_count();
@@ -1647,7 +1647,7 @@ mod edit_tests {
 
 	#[test]
 	fn undo_groups_batch_edits() {
-		let _guard = super::UNDO_SERIAL.lock().unwrap();
+		let _guard = super::UNDO_SERIAL.lock().unwrap_or_else(|e| e.into_inner());
 		unsafe {
 			let project = oak_project_new();
 			let base = oak_undo_count();
@@ -1680,7 +1680,7 @@ mod edit_tests {
 
 	#[test]
 	fn param_write_is_undoable() {
-		let _guard = super::UNDO_SERIAL.lock().unwrap();
+		let _guard = super::UNDO_SERIAL.lock().unwrap_or_else(|e| e.into_inner());
 		unsafe {
 			let project = oak_project_new();
 			let clip = oak_block_create_clip(project);
@@ -1713,7 +1713,7 @@ mod edit_tests {
 
 	#[test]
 	fn edit_null_safety() {
-		let _guard = super::UNDO_SERIAL.lock().unwrap();
+		let _guard = super::UNDO_SERIAL.lock().unwrap_or_else(|e| e.into_inner());
 		unsafe {
 			let project = oak_project_new();
 			assert_eq!(oak_footage_import(project, std::ptr::null(), 0), OAK_NODE_ID_INVALID);
@@ -1731,7 +1731,13 @@ mod edit_tests {
 			assert!(!oak_track_ripple_remove_block(project, OAK_NODE_ID_INVALID, 2));
 			assert!(!oak_block_set_length(project, OAK_NODE_ID_INVALID, OakRational { num: 1, den: 1 }));
 			assert!(!oak_node_connect(project, 1, OAK_NODE_ID_INVALID, "x".as_ptr(), 1, -1));
-			assert!(!oak_undo_undo() || true, "undo on empty stack is fine either way");
+			// On a non-empty stack this undoes a real entry; redo it
+			// immediately — a redoable tail would be dropped by the next
+			// push, shifting the global count out from under the other
+			// tests (UNDO_SERIAL serializes the stack, not the tail).
+			if oak_undo_undo() {
+				assert!(oak_undo_redo());
+			}
 			oak_project_release(project);
 		}
 	}
@@ -1905,7 +1911,7 @@ mod persist_tests {
 
 	#[test]
 	fn save_load_roundtrip() {
-		let _guard = super::UNDO_SERIAL.lock().unwrap();
+		let _guard = super::UNDO_SERIAL.lock().unwrap_or_else(|e| e.into_inner());
 		unsafe {
 			let project = oak_project_new();
 			let (n, nl) = arg("Persisted Folder");
@@ -1963,7 +1969,7 @@ mod persist_tests {
 
 	#[test]
 	fn deep_copy_is_independent() {
-		let _guard = super::UNDO_SERIAL.lock().unwrap();
+		let _guard = super::UNDO_SERIAL.lock().unwrap_or_else(|e| e.into_inner());
 		unsafe {
 			let project = oak_project_new();
 			let (n, nl) = arg("CopyTest");
