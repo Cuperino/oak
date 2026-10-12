@@ -107,7 +107,10 @@ pub extern "C" fn oak_project_active() -> *mut ProjectHandle {
 	}
 }
 
-fn with_project<R>(project: *const ProjectHandle, f: impl FnOnce(&Project) -> R) -> Option<R> {
+pub(crate) fn with_project<R>(
+	project: *const ProjectHandle,
+	f: impl FnOnce(&Project) -> R,
+) -> Option<R> {
 	if project.is_null() {
 		return None;
 	}
