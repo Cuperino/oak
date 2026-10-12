@@ -452,5 +452,16 @@ mod tests {
 	fn displayicc_queries_never_crash() {
 		let _ = displayicc_system_display_icc();
 		assert_eq!(displayicc_system_display_icc_for("no-such-monitor"), None);
+		// The platform-gated entries: the SDK declares and the engine
+		// exports exactly the same per-platform symbol set, so calling them
+		// here keeps the pairing linker-checked on every platform CI
+		// builds. Headless platforms answer None/false — never crash.
+		#[cfg(target_os = "windows")]
+		{
+			let _ = displayicc_windows_acm_active();
+			assert_eq!(displayicc_windows_monitor_fingerprint(0), None);
+		}
+		#[cfg(target_os = "linux")]
+		let _ = displayicc_x11_monitor_fingerprint_at(0.0, 0.0);
 	}
 }

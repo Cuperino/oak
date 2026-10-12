@@ -18,12 +18,16 @@ C wrapper 的能力缺口。背景：`oak-app-new` 以「只用 gpui-kit + oak-e
 
 ## 一、SDK 包装层本身的漏洞（小）
 
-**SDK 声明但 dylib 未导出**（链接隐患，2 个）：
+**SDK 声明但 dylib 未导出**（2 个，已核实非缺陷）：
 
 - `oak_core_displayicc_windows_acm_active`
 - `oak_core_displayicc_windows_monitor_fingerprint`
 
-两者是 Windows 专用导出，Linux 构建的 dylib 中不存在；SDK 侧未做 cfg 门控，调用即崩。
+两者是 Windows 专用导出。两侧的对称 cfg 门控保证了配对：引擎在
+`corestate.rs` 用 `#[cfg(target_os = "windows")]` 导出，SDK 在 `state.rs` 用同样的
+cfg 声明 extern 并包装安全函数 —— 每个平台只声明该平台存在的符号。符号表 diff 出现的
+「缺失」只是 Linux 构建的自然结果。SDK 的 `displayicc_queries_never_crash` 测试会调用
+当前平台的门控函数，平台配对由链接器在 CI 上强制校验。
 
 **dylib 导出但 SDK 未包裹**：
 
