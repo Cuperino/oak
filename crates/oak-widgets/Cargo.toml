@@ -1,0 +1,22 @@
+# Oak Video Editor - Non-Linear Video Editor
+# Copyright (C) 2026 Oak Team
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+
+# Staging area for the oak-gpui-fork widget modules (dock, effect_stack,
+# node_graph, timeline) being lifted onto gpui-kit. When the lift is
+# complete this crate folds into oak-app as `crate::widgets`.
+
+[package]
+name = "oak-widgets"
+version.workspace = true
+edition = "2024"
+
+[dependencies]
+gpui-kit = "0.7.3"
+
+[dev-dependencies]
+gpui-kit = { version = "0.7.3", features = ["test-support"] }

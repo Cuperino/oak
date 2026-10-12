@@ -6045,15 +6045,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "oak-app-new"
-version = "0.5.1"
-dependencies = [
- "gpui-kit",
- "oak-engine-rust-sdk",
- "serde_yaml",
-]
-
-[[package]]
 name = "oak-audio"
 version = "0.5.1"
 dependencies = [
@@ -6238,6 +6229,13 @@ name = "oak-undo"
 version = "0.5.1"
 dependencies = [
  "thiserror 2.0.20",
+]
+
+[[package]]
+name = "oak-widgets"
+version = "0.5.1"
+dependencies = [
+ "gpui-kit",
 ]
 
 [[package]]

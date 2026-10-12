@@ -38,7 +38,7 @@ exclude = ["gpui", "crates/oakengine.bk"]
 # directly, so nothing in the workspace referenced it. The sources are
 # kept at crates/oakengine.bk (excluded from the workspace) as a
 # reference snapshot; git history is the authoritative backup.
-default-members = ["crates/oak-app", "crates/oak-app-new", "crates/oak-cli", "crates/oak-worker"]
+default-members = ["crates/oak-app", "crates/oak-cli", "crates/oak-worker"]
 resolver = "2"
 
 [workspace.package]
@@ -60,8 +60,7 @@ opt-level = 1
 
 # The gpui crates dominate frame time; keep them optimized even in dev
 # builds (they build slowly, but a debug gpui is unusably slow at
-# runtime). This block used to live in crates/oak-app-new/Cargo.toml,
-# where cargo silently ignored it (profiles are root-only).
+# runtime).
 [profile.dev.package.gpui-pre]
 opt-level = 3
 [profile.dev.package.gpui-pre-macros]
