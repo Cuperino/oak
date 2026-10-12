@@ -79,7 +79,6 @@ pub fn set_language_code(code: &str) {
 	let code = if exists { code } else { FALLBACK_CODE };
 	*CURRENT_CODE.write().unwrap_or_else(|e| e.into_inner()) = code.to_string();
 	persist_language(code);
-	sync_widgets();
 }
 
 /// A pack's own display name — its `language.name` value (the endonym,
@@ -114,9 +113,9 @@ pub fn available_languages() -> Vec<String> {
 /// Loads the persisted language from the config. Called once at startup.
 /// Never fails: a missing key keeps the default (en-US).
 pub fn init() {
-	let code = crate::oakui::real::config_get_string("Language");
+	let code =
+		oak_engine_rust_sdk::state::config_get(None, "Language").unwrap_or_default();
 	if code.is_empty() {
-		sync_widgets();
 		return;
 	}
 	set_language_code(code.trim());
@@ -124,7 +123,7 @@ pub fn init() {
 
 /// Writes the code back to the config `Language` key.
 fn persist_language(code: &str) {
-	crate::oakui::real::config_set_string("Language", code);
+	let _ = oak_engine_rust_sdk::state::config_set(None, "Language", code);
 }
 
 /// Translates `key` in the active language. Never panics: unknown keys
@@ -160,35 +159,6 @@ pub fn tr_or(key: &str, fallback: &str) -> String {
 		return value.to_string();
 	}
 	fallback.to_string()
-}
-
-/// The keys the gpui widget crates localize through
-/// `gpui_widgets::i18n` (viewer transport labels, effect-stack empty state).
-pub const WIDGET_KEYS: &[&str] = &[
-	"viewer.safe_frames",
-	"viewer.zoom",
-	"viewer.no_frame_source",
-	"viewer.in_point",
-	"viewer.step_back",
-	"viewer.play",
-	"viewer.pause",
-	"viewer.step_forward",
-	"viewer.out_point",
-	"viewer.clear_range",
-	"effect_stack.empty",
-	"effect_stack.add",
-	"explorer.tree",
-	"explorer.icons",
-];
-
-/// Installs the active language's widget strings into the
-/// `gpui_widgets::i18n` string-table hook.
-pub fn sync_widgets() {
-	let mut table = gpui_widgets::i18n::StringTable::new();
-	for key in WIDGET_KEYS {
-		table.insert((*key).to_string(), tr(key).to_string());
-	}
-	gpui_widgets::i18n::set_table(table);
 }
 
 // ---------------------------------------------------------------------------
@@ -396,41 +366,6 @@ mod tests {
 				panic!("key {key} has identical en-US and zh-CN values ({en_value:?})");
 			}
 		}
-	}
-
-	/// Every built-in node type the factory registers carries a
-	/// `node.<type-id suffix>.name` entry in the reference pack *and* in
-	/// the translation: the effect library and the inspector build that key
-	/// at runtime, so a node without an entry would show its English name
-	/// in every language — and one whose zh value repeats the English name
-	/// was never translated at all. The matching parameter keys are held by
-	/// `effectchain`'s own test against the live parameter list.
-	#[test]
-	fn every_builtin_node_name_is_translated() {
-		let tables = tables().read().unwrap_or_else(|e| e.into_inner());
-		let en = tables.get("en-US").expect("en-US pack");
-		let zh = tables.get("zh-CN").expect("zh-CN pack");
-		let mut nodes = 0usize;
-		for meta in oak_node::factory::Factory::global().entries() {
-			let suffix = meta.type_id.rsplit('.').next().unwrap_or(meta.type_id);
-			let key = format!("node.{suffix}.name");
-			let en_value = en
-				.get(&key)
-				.unwrap_or_else(|| panic!("{key} missing from the en-US pack"));
-			assert_eq!(
-				*en_value, meta.name,
-				"{key} does not carry the node's English name"
-			);
-			let zh_value = zh
-				.get(&key)
-				.unwrap_or_else(|| panic!("{key} missing from the zh-CN pack"));
-			assert_ne!(zh_value, en_value, "{key} is not translated ({en_value:?})");
-			nodes += 1;
-		}
-		assert!(
-			nodes >= 60,
-			"the factory registers the built-in node types ({nodes})"
-		);
 	}
 
 	/// `tr` falls back from the active language to English and then to

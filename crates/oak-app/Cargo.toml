@@ -83,7 +83,8 @@ oak-storage = { path = "../oak-storage" }
 oak-task = { path = "../oak-task" }
 oak-timeline = { path = "../oak-timeline" }
 oak-undo = { path = "../oak-undo" }
-# oak-engine = { path = "../oak-engine" }
+oak-engine-rust-sdk = { path = "../oak-engine-rust-sdk" }
+gpui-kit = "0.7.3"
 [features]
 default = []
 # Force the mock engine even though the real facade is linked. Off by

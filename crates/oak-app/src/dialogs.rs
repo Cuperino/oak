@@ -57,7 +57,7 @@ use crate::oakui::real::{
 // The `DisplayBitDepth` config key lives with the format mapping it
 // drives (oak-render's backend); the preferences dropdown and the
 // window-layer consumer share the same key.
-use oak_core::backend::CONFIG_KEY_DISPLAY_BIT_DEPTH;
+use oak_engine_rust_sdk::core::CONFIG_KEY_DISPLAY_BIT_DEPTH;
 
 // ---------------------------------------------------------------------------
 // Preferences

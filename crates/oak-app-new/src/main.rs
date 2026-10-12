@@ -14,7 +14,8 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-//! The `oakapp` binary: opens the Oak main window (see [`oakapp::app`]).
+//! The `oak-editor-new` binary: opens the Oak main window (see
+//! [`oak_app_new::app`]).
 
 // Windows release builds are GUI applications: without the subsystem
 // attribute the linker marks the executable as a console program and
@@ -23,5 +24,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-	oakapp::run();
+	oak_app_new::run();
 }
