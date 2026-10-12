@@ -6236,6 +6236,9 @@ name = "oak-widgets"
 version = "0.5.1"
 dependencies = [
  "gpui-kit",
+ "image",
+ "smallvec",
+ "thiserror 2.0.20",
 ]
 
 [[package]]

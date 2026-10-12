@@ -2648,7 +2648,7 @@ mod tests {
 		});
 		let any_window = *window.deref();
 		let host = window.root(&mut test_app).expect("host root");
-		let mut cx = VisualTestContext::from_window(any_window, &test_app).into_mut();
+		let cx = VisualTestContext::from_window(any_window, &test_app).into_mut();
 
 		let toggle = cx
 			.debug_bounds("track-toggle-0-L")

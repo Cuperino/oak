@@ -17,6 +17,9 @@ edition = "2024"
 
 [dependencies]
 gpui-kit = "0.7.3"
+thiserror = "2"
 
 [dev-dependencies]
 gpui-kit = { version = "0.7.3", features = ["test-support"] }
+image = "0.25"
+smallvec = "1"
