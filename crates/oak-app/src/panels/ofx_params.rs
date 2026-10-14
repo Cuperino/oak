@@ -1401,14 +1401,20 @@ impl<E: AppEngine> Render for OfxParamsView<E> {
 					})
 					.into_any_element()
 			} else {
+				// The wheel group captions each wheel instead of a row label;
+				// the (empty) label column would push the third wheel past
+				// the card's right edge, where the clip mask makes it
+				// unclickable.
 				let label = div()
 					.flex_shrink_0()
-					.w(px(110.0))
+					.w(px(if matches!(control.kind, ControlKind::WheelGroup(_)) {
+						0.0
+					} else {
+						110.0
+					}))
 					.text_sm()
 					.text_color(colors.text)
 					.child(
-						// The wheel group captions each wheel instead of a
-						// single row label.
 						if matches!(control.kind, ControlKind::WheelGroup(_)) {
 							SharedString::default()
 						} else {
@@ -4788,7 +4794,9 @@ mod tests {
 	/// and a wheel drag writes the band's colour param to the engine.
 	#[gpui_kit::test]
 	async fn three_way_color_gets_grading_wheels(cx: &mut TestAppContext) {
-		let (window, view) = open_params_view_for(cx, EffectId(901), 420.0, 900.0);
+		// 340px wide: the inspector's default docked width — the regression
+		// window (a wider window would not have caught the clipping).
+		let (window, view) = open_params_view_for(cx, EffectId(901), 340.0, 900.0);
 		let visual = gpui_kit::VisualTestContext::from_window(window.into(), cx).into_mut();
 		visual.update(|window, cx| {
 			window.draw(cx).clear(cx);
@@ -4817,6 +4825,25 @@ mod tests {
 			.find(|(_, id, value)| id == "shadows_color_in" && value.starts_with("Color"))
 			.expect("a colour write for the shadows band");
 		assert!(write.2.contains("0.9") || write.2.contains("1.0"), "red-ward: {write:?}");
+
+		// Regression: the wheel row must fit the panel — a clipped wheel is
+		// unreachable (the content mask swallows its clicks).
+		let window_right = {
+			let first = visual.debug_bounds("color-wheel-0").expect("wheel 0");
+			first.origin.x
+		};
+		let _ = window_right;
+		for wheel_id in ["color-wheel-0", "color-wheel-1", "color-wheel-2"] {
+			let bounds = visual
+				.debug_bounds(wheel_id)
+				.unwrap_or_else(|| panic!("{wheel_id} painted"));
+			let panel_right = px(340.0);
+			assert!(
+				bounds.origin.x + bounds.size.width <= panel_right,
+				"{wheel_id} must not be clipped by the panel ({:?} exceeds {panel_right:?})",
+				bounds,
+			);
+		}
 	}
 
 	/// `build_control` maps every value type to its widget (or read-only
