@@ -20,11 +20,11 @@
 //! write failed") on the left; current timecode / duration, frame rate and
 //! resolution on the right.
 
-use gpui::colors::DefaultColors;
-use gpui::timeline::Frame;
-use gpui::{div, prelude::*, Context, Entity, Render, Window};
+use gpui_kit::colors::DefaultColors;
+use crate::widgets::timeline::Frame;
+use gpui_kit::{div, prelude::*, Context, Entity, Render, Window};
 
-use gpui_widgets::viewer::PlaybackClock;
+use crate::widgets::viewer::PlaybackClock;
 
 use crate::oakui::timecode::{format_duration, format_fps, format_resolution, format_timecode};
 use crate::oakui::AppEngine;
@@ -64,7 +64,7 @@ impl<E: AppEngine> Render for StatusBar<E> {
 			.map(|p| p.name.clone())
 			.unwrap_or_else(|| crate::i18n::tr("status.untitled").to_string());
 
-		let segment = |colors: &gpui::colors::Colors, text: String| {
+		let segment = |colors: &gpui_kit::colors::Colors, text: String| {
 			div().px_2().py_1().text_color(colors.text).child(text)
 		};
 
@@ -73,7 +73,7 @@ impl<E: AppEngine> Render for StatusBar<E> {
 		let (storage_text, storage_color) = if engine.storage_last_error().is_some() {
 			(
 				crate::i18n::tr("status.storage.error"),
-				gpui::rgba(0xcc6666ff),
+				gpui_kit::rgba(0xcc6666ff),
 			)
 		} else if engine.storage_bound() {
 			(

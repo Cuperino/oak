@@ -39,9 +39,9 @@
 //! ```
 
 #[cfg(target_os = "macos")]
-use gpui::{px, size, AnyWindowHandle, AppContext, Entity, Result, VisualTestAppContext};
+use gpui_kit::{px, size, AnyWindowHandle, AppContext, Entity, Result, VisualTestAppContext};
 #[cfg(target_os = "macos")]
-use gpui_platform::current_platform;
+use gpui_kit::platform::current_platform;
 #[cfg(target_os = "macos")]
 use oakapp::app::OakApp;
 #[cfg(target_os = "macos")]
@@ -133,7 +133,7 @@ fn open_shell(
 	width: f32,
 	height: f32,
 ) -> (
-	gpui::WindowHandle<OakApp<MockEngine>>,
+	gpui_kit::WindowHandle<OakApp<MockEngine>>,
 	Entity<OakApp<MockEngine>>,
 ) {
 	let mut root_slot = None;
@@ -185,7 +185,7 @@ fn settle(cx: &mut VisualTestAppContext, handle: AnyWindowHandle) {
 #[cfg(target_os = "macos")]
 fn capture_preferences(
 	cx: &mut VisualTestAppContext,
-	handle: gpui::WindowHandle<OakApp<MockEngine>>,
+	handle: gpui_kit::WindowHandle<OakApp<MockEngine>>,
 	root: &Entity<OakApp<MockEngine>>,
 	out: &str,
 ) -> Result<()> {
@@ -207,7 +207,7 @@ fn capture_preferences(
 #[cfg(target_os = "macos")]
 fn capture_manager(
 	cx: &mut VisualTestAppContext,
-	handle: gpui::WindowHandle<OakApp<MockEngine>>,
+	handle: gpui_kit::WindowHandle<OakApp<MockEngine>>,
 	root: &Entity<OakApp<MockEngine>>,
 	out: &str,
 ) -> Result<()> {

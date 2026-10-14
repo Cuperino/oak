@@ -28,7 +28,7 @@
 
 use std::sync::mpsc;
 
-use gpui::RenderImage;
+use gpui_kit::RenderImage;
 use oak_core::texture::Texture;
 use oak_core::{Rational, TimeRange};
 use oak_node::id::NodeId;
@@ -1507,7 +1507,7 @@ mod tests {
 	impl EnvGuard {
 		fn set(key: &'static str, value: impl AsRef<std::ffi::OsStr>) -> Self {
 			let prev = std::env::var_os(key);
-			std::env::set_var(key, value);
+			unsafe { std::env::set_var(key, value) };
 			Self { key, prev }
 		}
 	}
@@ -1515,8 +1515,8 @@ mod tests {
 	impl Drop for EnvGuard {
 		fn drop(&mut self) {
 			match &self.prev {
-				Some(value) => std::env::set_var(self.key, value),
-				None => std::env::remove_var(self.key),
+				Some(value) => unsafe { std::env::set_var(self.key, value) },
+				None => unsafe { std::env::remove_var(self.key) },
 			}
 		}
 	}
@@ -3744,11 +3744,11 @@ mod tests {
 			return;
 		}
 		let prev = std::env::var_os("OAK_WORKER_BIN");
-		std::env::set_var("OAK_WORKER_BIN", "/nonexistent/oak-worker-for-test");
+		unsafe { std::env::set_var("OAK_WORKER_BIN", "/nonexistent/oak-worker-for-test") };
 		let started = ensure_render_manager();
 		match prev {
-			Some(value) => std::env::set_var("OAK_WORKER_BIN", value),
-			None => std::env::remove_var("OAK_WORKER_BIN"),
+			Some(value) => unsafe { std::env::set_var("OAK_WORKER_BIN", value) },
+			None => unsafe { std::env::remove_var("OAK_WORKER_BIN") },
 		}
 		assert!(!started, "a missing worker binary must not report success");
 		assert!(
@@ -3773,7 +3773,7 @@ mod tests {
 		fn set() -> Self {
 			let prev = std::env::var("OAK_WORKER_BIN").ok();
 			match super::test_worker_bin() {
-				Some(path) => std::env::set_var("OAK_WORKER_BIN", path),
+				Some(path) => unsafe { std::env::set_var("OAK_WORKER_BIN", path) },
 				None => eprintln!(
 					"oak-worker binary not found (test-executable sibling, target/{{debug,release}} or OAK_WORKER_BIN); build it with `cargo build -p oak-worker` or set OAK_WORKER_BIN"
 				),
@@ -3785,8 +3785,8 @@ mod tests {
 	impl Drop for WorkerBinGuard {
 		fn drop(&mut self) {
 			match &self.prev {
-				Some(p) => std::env::set_var("OAK_WORKER_BIN", p),
-				None => std::env::remove_var("OAK_WORKER_BIN"),
+				Some(p) => unsafe { std::env::set_var("OAK_WORKER_BIN", p) },
+				None => unsafe { std::env::remove_var("OAK_WORKER_BIN") },
 			}
 		}
 	}

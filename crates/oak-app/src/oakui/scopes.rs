@@ -15,7 +15,7 @@
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 //! Scope analysis for the viewer scopes: derives the luma / chroma sample
-//! streams the `gpui_widgets::scopes` widgets graph from an F32 RGBA frame
+//! streams the `crate::widgets::scopes` widgets graph from an F32 RGBA frame
 //! (the engine pipeline's pixel format).
 //!
 //! The analysis runs once per rendered frame, inside the same pass that
@@ -177,16 +177,16 @@ mod tests {
 		}
 		let data = analyze_f32_rgba(width, height, &samples);
 
-		let bins = gpui_widgets::scopes::histogram_bins(&data.luma, 4);
+		let bins = crate::widgets::scopes::histogram_bins(&data.luma, 4);
 		assert_eq!(bins, vec![16, 0, 0, 16]);
 
-		let envelope = gpui_widgets::scopes::waveform_envelope(&data.luma, 2);
+		let envelope = crate::widgets::scopes::waveform_envelope(&data.luma, 2);
 		assert_eq!(envelope.len(), 2);
 		assert!((envelope[0].0 - 0.0).abs() < 1e-6 && (envelope[0].1 - 0.0).abs() < 1e-6);
 		assert!((envelope[1].0 - 1.0).abs() < 1e-6 && (envelope[1].1 - 1.0).abs() < 1e-6);
 
 		// Neutral gray chroma projects to the vectorscope's center.
-		let points = gpui_widgets::scopes::vectorscope_points(&data.chroma);
+		let points = crate::widgets::scopes::vectorscope_points(&data.chroma);
 		assert!(points
 			.iter()
 			.all(|&(u, v)| u.abs() < 1e-6 && v.abs() < 1e-6));

@@ -14,7 +14,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-//! The node editor panel (节点编辑器): the real `gpui::node_graph` canvas over
+//! The node editor panel (节点编辑器): the real `gpui_kit::node_graph` canvas over
 //! the engine's graph (the mock's demo graph, or the real engine's current
 //! sequence graph), with the design's zoom controls (+ / − / 适配).
 //!
@@ -28,25 +28,29 @@
 use std::collections::BTreeSet;
 
 use crate::oakui::component::menu::{Menu, MenuItem};
-use gpui::colors::DefaultColors;
-use gpui::dock::{DockPanel, PanelEvent};
-use gpui::node_graph::{
+use gpui_kit::colors::DefaultColors;
+use gpui_kit::component::dock::{BasePanel, Panel, PanelEvent};
+use gpui_kit::{FocusHandle, Focusable};
+use crate::panels::PanelFocused;
+use crate::widgets::node_graph::{
 	EdgeData, EdgeId, NodeData, NodeElement, NodeGraphEvent, NodeGraphView, NodeId,
 	NodeVisualState, MAX_ZOOM, MIN_ZOOM,
 };
-use gpui::{
-	div, point, prelude::*, px, AnyElement, App, Bounds, ClickEvent, Context, Entity, EventEmitter,
-	MouseButton, Pixels, Point, Render, SharedString, Window,
+use gpui_kit::{
+	div, point, prelude::*, px, App, Bounds, ClickEvent, Context, Entity, EventEmitter,
+	MouseButton, Pixels, Point, Render, Window,
 };
 
 use crate::oakui::component::menu;
 use crate::oakui::component::menu::{ContextMenuHandle, ContextMenuTriggered};
 use crate::oakui::{AppEngine, NodeLibraryEntry};
 use crate::panels::commands::PanelCommandHandler;
-use crate::panels::ids::NODE_EDITOR;
 
 /// The node editor panel.
 pub struct NodeEditorPanel<E: AppEngine> {
+	/// The panel's focus handle (the dock's zoom/focus and the
+	/// shell's focused-panel routing need it).
+	focus_handle: FocusHandle,
 	/// The node-graph canvas over the engine's graph data.
 	graph: Entity<NodeGraphView<E>>,
 	engine: Entity<E>,
@@ -126,6 +130,7 @@ impl<E: AppEngine> NodeEditorPanel<E> {
 
 		let mut panel = Self {
 			graph,
+			focus_handle: cx.focus_handle(),
 			engine,
 			fitted: false,
 			context_menu,
@@ -248,7 +253,7 @@ impl<E: AppEngine> NodeEditorPanel<E> {
 		for node in &nodes {
 			let element = NodeElement::from_node(node, NodeVisualState::default());
 			let position = node.position();
-			let width = gpui::node_graph::DEFAULT_NODE_WIDTH;
+			let width = crate::widgets::node_graph::DEFAULT_NODE_WIDTH;
 			let height = element.height();
 			let (x, y) = (f32::from(position.x), f32::from(position.y));
 			min_x = min_x.min(x);
@@ -264,7 +269,7 @@ impl<E: AppEngine> NodeEditorPanel<E> {
 
 	/// The canvas size to fit against: the graph view's own painted size once
 	/// known, otherwise the window (before the first layout).
-	fn fit_viewport(&self, window: &Window, cx: &App) -> gpui::Size<Pixels> {
+	fn fit_viewport(&self, window: &Window, cx: &App) -> gpui_kit::Size<Pixels> {
 		let viewport = self.graph.read(cx).viewport_size();
 		if viewport.width > px(0.0) && viewport.height > px(0.0) {
 			viewport
@@ -322,15 +327,15 @@ impl<E: AppEngine> Render for NodeEditorPanel<E> {
 			// dock re-emits this as `DockEvent::PanelFocused`, which the
 			// shell uses to route focused-panel commands).
 			.on_mouse_down(MouseButton::Left, {
-				cx.listener(|_this, _event: &gpui::MouseDownEvent, _window, cx| {
-					cx.emit(PanelEvent::Focused);
+				cx.listener(|_this, _event: &gpui_kit::MouseDownEvent, _window, cx| {
+					cx.emit(PanelFocused);
 				})
 			})
 			// The graph's `BackgroundClicked` only carries a graph-space
 			// position; record the pointer here (right-clicks bubble up) so
 			// the background menu can open at the window position.
 			.on_mouse_down(MouseButton::Right, {
-				cx.listener(|this, event: &gpui::MouseDownEvent, _window, _cx| {
+				cx.listener(|this, event: &gpui_kit::MouseDownEvent, _window, _cx| {
 					this.last_right_click = Some(event.position);
 				})
 			})
@@ -388,8 +393,8 @@ impl<E: AppEngine> Render for NodeEditorPanel<E> {
 					// An effect dragged out of the effect library drops onto
 					// the canvas as a new node at the drop position (the
 					// background "add node" menu path).
-					.on_drop::<gpui::effect_stack::LibraryEffectDrag>(cx.listener(
-						|this, payload: &gpui::effect_stack::LibraryEffectDrag, window, cx| {
+					.on_drop::<crate::widgets::effect_stack::LibraryEffectDrag>(cx.listener(
+						|this, payload: &crate::widgets::effect_stack::LibraryEffectDrag, window, cx| {
 							let graph_position = this
 								.graph
 								.read(cx)
@@ -403,7 +408,7 @@ impl<E: AppEngine> Render for NodeEditorPanel<E> {
 						},
 					))
 					.can_drop(|payload, _window, _cx| {
-						payload.is::<gpui::effect_stack::LibraryEffectDrag>()
+						payload.is::<crate::widgets::effect_stack::LibraryEffectDrag>()
 					})
 					.child(self.graph.clone()),
 			)
@@ -422,7 +427,7 @@ fn zoom_button<E: AppEngine>(
 	label: impl IntoElement,
 	tooltip: &'static str,
 	action: impl Fn(&mut NodeEditorPanel<E>, &mut Window, &mut Context<NodeEditorPanel<E>>) + 'static,
-) -> impl gpui::IntoElement {
+) -> impl gpui_kit::IntoElement {
 	let colors = cx.default_colors().clone();
 	let container = colors.container;
 	let tooltip_label = crate::i18n::tr(tooltip);
@@ -439,13 +444,13 @@ fn zoom_button<E: AppEngine>(
 		.cursor_pointer()
 		.hover(move |style| style.bg(container))
 		.tooltip(move |window, cx| {
-			gpui_widgets::tooltip::tooltip_view(tooltip_label.into(), window, cx)
+			crate::widgets::tooltip::tooltip_view(tooltip_label.into(), window, cx)
 		})
 		.on_click(cx.listener(move |this, _event: &ClickEvent, window, cx| {
 			action(this, window, cx);
 		}));
 	if let Some(name) = icon_name {
-		el = el.child(gpui::img(crate::oakui::icons::icon_path(name, cx)).size(px(16.0)));
+		el = el.child(gpui_kit::img(crate::oakui::icons::icon_path(name, cx)).size(px(16.0)));
 	} else {
 		el = el.child(label);
 	}
@@ -454,21 +459,34 @@ fn zoom_button<E: AppEngine>(
 
 impl<E: AppEngine> EventEmitter<PanelEvent> for NodeEditorPanel<E> {}
 
+impl<E: AppEngine> NodeEditorPanel<E> {
+	/// Test access to the graph canvas and engine (dock-level regression
+	/// tests live in the shell's test module).
+	#[cfg(test)]
+	pub(crate) fn test_handles(&self) -> (Entity<NodeGraphView<E>>, Entity<E>) {
+		(self.graph.clone(), self.engine.clone())
+	}
+}
+
 impl<E: AppEngine> EventEmitter<ContextMenuTriggered> for NodeEditorPanel<E> {}
 
-impl<E: AppEngine> DockPanel for NodeEditorPanel<E> {
-	fn panel_id(&self) -> gpui::dock::PanelId {
-		NODE_EDITOR
-	}
+impl<E: AppEngine> EventEmitter<PanelFocused> for NodeEditorPanel<E> {}
 
-	fn title(&self, _cx: &App) -> SharedString {
-		crate::i18n::tr("panel.node_editor").into()
+impl<E: AppEngine> Focusable for NodeEditorPanel<E> {
+	fn focus_handle(&self, _cx: &App) -> FocusHandle {
+		self.focus_handle.clone()
 	}
+}
 
-	fn tab_content(&self, _cx: &App) -> AnyElement {
-		div()
-			.child(crate::i18n::tr("panel.node_editor"))
-			.into_any_element()
+impl<E: AppEngine> BasePanel for NodeEditorPanel<E> {
+	fn panel_name(&self) -> &'static str {
+		crate::panels::ids::NODE_EDITOR
+	}
+}
+
+impl<E: AppEngine> Panel for NodeEditorPanel<E> {
+	fn title(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+		crate::i18n::tr("panel.node_editor")
 	}
 }
 
@@ -579,9 +597,9 @@ mod tests {
 	use crate::actions::ActionId;
 	use crate::oakui::nodegraph::GraphEndpoint;
 	use crate::oakui::MockEngine;
-	use gpui::effect_stack::{EffectId, EffectStackEvent};
-	use gpui::node_graph::{NodeGraphDataSource, PortData, PortId};
-	use gpui::{size, TestAppContext, VisualTestContext};
+	use crate::widgets::effect_stack::{EffectId, EffectStackEvent};
+	use crate::widgets::node_graph::{NodeGraphDataSource, PortData, PortId};
+	use gpui_kit::{size, TestAppContext, VisualTestContext};
 
 	/// Builds the panel in a window and returns a `VisualTestContext` for
 	/// bounds assertions.
@@ -591,7 +609,10 @@ mod tests {
 		&'static mut VisualTestContext,
 		Entity<NodeEditorPanel<MockEngine>>,
 	) {
-		cx.update(|cx| cx.init_colors());
+		cx.update(|cx| {
+			gpui_kit::init(cx);
+			cx.init_colors();
+		});
 		let window = cx.open_window(size(px(640.0), px(480.0)), |window, cx| {
 			let engine = cx.new(crate::oakui::MockEngine::demo);
 			NodeEditorPanel::new(engine, window, cx)
@@ -628,7 +649,7 @@ mod tests {
 		let state = cx.read(|app| panel.read(app).graph.read(app).state().clone());
 		assert_ne!(
 			state.offset(),
-			gpui::node_graph::GraphViewState::new().offset()
+			crate::widgets::node_graph::GraphViewState::new().offset()
 		);
 		assert!(state.zoom() > 0.0);
 	}
@@ -733,7 +754,7 @@ mod tests {
 	/// engine through the panel's event loop, and the panel's observe then
 	/// sets the widget selection — so the graph, the inspector and the
 	/// timeline share one highlight.
-	#[gpui::test]
+	#[gpui_kit::test]
 	async fn engine_selection_syncs_into_the_graph_widget(cx: &mut TestAppContext) {
 		let (cx, panel) = panel_window(cx);
 
@@ -787,7 +808,7 @@ mod tests {
 	/// and the connection rules follow the ports — the input's `feed_in` takes
 	/// a wire, its output starts one, and the sink can never source a wire
 	/// (it has no output port to drag from).
-	#[gpui::test]
+	#[gpui_kit::test]
 	async fn demo_endpoints_are_protected_and_marked(cx: &mut TestAppContext) {
 		let (cx, panel) = panel_window(cx);
 
@@ -840,7 +861,7 @@ mod tests {
 	/// dropped whole. The last step goes behind the panel to show the model
 	/// itself has no protection: the panel is the only thing standing between
 	/// a Delete/Backspace gesture and the pair.
-	#[gpui::test]
+	#[gpui_kit::test]
 	async fn delete_requests_cannot_remove_endpoints(cx: &mut TestAppContext) {
 		let (cx, panel) = panel_window(cx);
 
@@ -947,7 +968,7 @@ mod tests {
 
 	/// Local menu routing (color labels, add-node entries, unknown ids),
 	/// the fit/zoom viewport helpers and the dock metadata.
-	#[gpui::test]
+	#[gpui_kit::test]
 	async fn menu_fit_zoom_and_dock_paths(cx: &mut TestAppContext) {
 		let (cx, panel) = panel_window(cx);
 
@@ -979,9 +1000,7 @@ mod tests {
 		});
 
 		cx.update(|_window, app| {
-			assert!(!panel.read(app).title(app).is_empty());
-			let _ = panel.read(app).tab_content(app);
-			assert_eq!(panel.read(app).panel_id(), NODE_EDITOR);
+			assert_eq!(panel.read(app).panel_name(), crate::panels::ids::NODE_EDITOR);
 		});
 	}
 }

@@ -50,10 +50,10 @@
 
 use std::collections::HashMap;
 
-use gpui::node_graph::{
+use crate::widgets::node_graph::{
 	EdgeData, EdgeId, NodeData, NodeId, PortData, PortId, PortDataType, PortKind,
 };
-use gpui::{hsla, point, px, Hsla, Pixels, Point, SharedString};
+use gpui_kit::{hsla, point, px, Hsla, Pixels, Point, SharedString};
 
 use oak_node::id::NodeId as DomainNodeId;
 
@@ -704,10 +704,10 @@ fn fallback_base(g: &oak_node::graph::Graph, seq: DomainNodeId, ident: u64) -> (
 			row += 1;
 		}
 	}
-	(
+	Some((
 		40.0 + f64::from(target_role * 260),
 		40.0 + f64::from(row * 180),
-	)
+	))
 }
 
 /// Resolve a domain node id from a widget identity, validating it against
@@ -867,7 +867,7 @@ mod tests {
 	use super::*;
 	use crate::oakui::effectchain;
 	use crate::oakui::graphops;
-	use gpui::node_graph::NodeGraphEvent;
+	use crate::widgets::node_graph::NodeGraphEvent;
 	use oak_node::track::TrackType;
 	use oak_node::value::ValueType;
 

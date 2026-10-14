@@ -42,24 +42,24 @@ use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
-use gpui::effect_stack::{
+use crate::widgets::effect_stack::{
 	EffectCardKind, EffectData, EffectId, EffectStackDataSource, EffectStackEvent,
 };
-use gpui::node_graph::{
+use crate::widgets::node_graph::{
 	EdgeData, EdgeId, NodeData, NodeGraphDataSource, NodeGraphEvent, NodeId, PortData,
 	PortDataType, PortId, PortKind,
 };
-use gpui::timeline::{
+use crate::widgets::timeline::{
 	ClipData, ClipId, Frame, FrameRange, FrameRate, Marker, TimelineDataSource, TimelineEvent,
 	TrackData, TrackKind,
 };
-use gpui::{
+use gpui_kit::{
 	hsla, point, prelude::*, px, App, Context, Entity, Hsla, Pixels, Point, RenderImage,
 	SharedString,
 };
-use gpui_widgets::audio_meter::AudioMeterDataSource;
-use gpui_widgets::project_explorer::{ProjectDataSource, ProjectEntry};
-use gpui_widgets::viewer::PlaybackClock;
+use crate::widgets::audio_meter::AudioMeterDataSource;
+use crate::widgets::project_explorer::{ProjectDataSource, ProjectEntry};
+use crate::widgets::viewer::PlaybackClock;
 
 use oak_core::Rational;
 use oak_node::block::clip_input;
@@ -1823,12 +1823,12 @@ impl AppEngine for MockEngine {
 					}
 					let clip = &mut self.tracks[track].clips[index];
 					match edge {
-						gpui::timeline::TrimEdge::Start => {
+						crate::widgets::timeline::TrimEdge::Start => {
 							let delta = new_frame.0 - clip.range.start.0;
 							clip.range.start = *new_frame;
 							clip.media_in = Frame(clip.media_in.0 + delta);
 						}
-						gpui::timeline::TrimEdge::End => {
+						crate::widgets::timeline::TrimEdge::End => {
 							clip.range.end = *new_frame;
 						}
 					}
@@ -1853,18 +1853,18 @@ impl AppEngine for MockEngine {
 					let delta = {
 						let clip = &self.tracks[track].clips[index];
 						match edge {
-							gpui::timeline::TrimEdge::Start => new_frame.0 - clip.range.start.0,
-							gpui::timeline::TrimEdge::End => new_frame.0 - clip.range.end.0,
+							crate::widgets::timeline::TrimEdge::Start => new_frame.0 - clip.range.start.0,
+							crate::widgets::timeline::TrimEdge::End => new_frame.0 - clip.range.end.0,
 						}
 					};
 					{
 						let clip = &mut self.tracks[track].clips[index];
 						match edge {
-							gpui::timeline::TrimEdge::Start => {
+							crate::widgets::timeline::TrimEdge::Start => {
 								clip.range.start = *new_frame;
 								clip.media_in = Frame(clip.media_in.0 + delta);
 							}
-							gpui::timeline::TrimEdge::End => {
+							crate::widgets::timeline::TrimEdge::End => {
 								clip.range.end = *new_frame;
 							}
 						}
@@ -1976,16 +1976,16 @@ impl AppEngine for MockEngine {
 					return;
 				};
 				match toggle {
-					gpui::timeline::TrackHeaderEvent::ToggleLock => {
+					crate::widgets::timeline::TrackHeaderEvent::ToggleLock => {
 						track.locked = !track.locked;
 					}
-					gpui::timeline::TrackHeaderEvent::ToggleMute => {
+					crate::widgets::timeline::TrackHeaderEvent::ToggleMute => {
 						track.muted = !track.muted;
 					}
-					gpui::timeline::TrackHeaderEvent::ToggleSolo => {
+					crate::widgets::timeline::TrackHeaderEvent::ToggleSolo => {
 						track.solo = !track.solo;
 					}
-					gpui::timeline::TrackHeaderEvent::ToggleVisibility => {
+					crate::widgets::timeline::TrackHeaderEvent::ToggleVisibility => {
 						track.visible = !track.visible;
 						track.muted = !track.visible;
 					}
@@ -3335,14 +3335,14 @@ impl MockEngine {
 #[cfg(test)]
 mod tests {
 	use super::*;
-	use gpui::timeline::TrimEdge;
-	use gpui::TestAppContext;
+	use crate::widgets::timeline::TrimEdge;
+	use gpui_kit::TestAppContext;
 
-	fn demo_engine(app: &mut gpui::App) -> Entity<MockEngine> {
+	fn demo_engine(app: &mut gpui_kit::App) -> Entity<MockEngine> {
 		app.new(MockEngine::demo)
 	}
 
-	#[gpui::test]
+	#[gpui_kit::test]
 	async fn demo_project_has_a_sequence_and_four_tracks(cx: &mut TestAppContext) {
 		cx.update(|app| {
 			let engine = demo_engine(app);
@@ -3358,7 +3358,7 @@ mod tests {
 		});
 	}
 
-	#[gpui::test]
+	#[gpui_kit::test]
 	async fn gateway_play_starts_the_program_clock(cx: &mut TestAppContext) {
 		cx.update(|app| {
 			let engine = demo_engine(app);
@@ -3370,7 +3370,7 @@ mod tests {
 		});
 	}
 
-	#[gpui::test]
+	#[gpui_kit::test]
 	async fn gateway_step_moves_the_clock_within_the_sequence(cx: &mut TestAppContext) {
 		cx.update(|app| {
 			let engine = demo_engine(app);
@@ -3389,7 +3389,7 @@ mod tests {
 		});
 	}
 
-	#[gpui::test]
+	#[gpui_kit::test]
 	async fn gateway_request_frame_seeks_and_pauses_stays(cx: &mut TestAppContext) {
 		cx.update(|app| {
 			let engine = demo_engine(app);
@@ -3435,7 +3435,7 @@ mod tests {
 		assert!(clock.transport.is_playing(), "still playing while looping");
 	}
 
-	#[gpui::test]
+	#[gpui_kit::test]
 	async fn effect_stack_edit_applies_to_the_model(cx: &mut TestAppContext) {
 		cx.update(|app| {
 			let engine = demo_engine(app);
@@ -3458,11 +3458,11 @@ mod tests {
 	/// `CardSelected`; the card selection mirrors its node into the node
 	/// editor, whose `SelectionChanged` echo must not fight the toggle (the
 	/// demo's 变换 card maps to graph node 2).
-	#[gpui::test]
+	#[gpui_kit::test]
 	async fn effect_card_expansion_survives_the_card_selection_echo(cx: &mut TestAppContext) {
 		cx.update(|app| {
 			let engine = demo_engine(app);
-			let toggle = |app: &mut gpui::App, expanded: bool| {
+			let toggle = |app: &mut gpui_kit::App, expanded: bool| {
 				engine.update(app, |engine, cx| {
 					engine.apply_effect_event(
 						&EffectStackEvent::ExpansionToggled {
@@ -3473,7 +3473,7 @@ mod tests {
 					);
 				});
 			};
-			let is_expanded = |app: &gpui::App| -> bool {
+			let is_expanded = |app: &gpui_kit::App| -> bool {
 				engine
 					.read(app)
 					.effects()
@@ -3518,7 +3518,7 @@ mod tests {
 		});
 	}
 
-	#[gpui::test]
+	#[gpui_kit::test]
 	async fn timeline_edits_are_applied_to_the_mock_model(cx: &mut TestAppContext) {
 		cx.update(|app| {
 			let engine = demo_engine(app);
@@ -3574,9 +3574,9 @@ mod tests {
 		});
 	}
 
-	#[gpui::test]
+	#[gpui_kit::test]
 	async fn track_toggle_requests_flip_the_track_flags(cx: &mut TestAppContext) {
-		use gpui::timeline::TrackHeaderEvent;
+		use crate::widgets::timeline::TrackHeaderEvent;
 		cx.update(|app| {
 			let engine = demo_engine(app);
 
@@ -3622,9 +3622,9 @@ mod tests {
 		});
 	}
 
-	#[gpui::test]
+	#[gpui_kit::test]
 	async fn locked_tracks_reject_clip_edits(cx: &mut TestAppContext) {
-		use gpui::timeline::TrackHeaderEvent;
+		use crate::widgets::timeline::TrackHeaderEvent;
 		cx.update(|app| {
 			let engine = demo_engine(app);
 
@@ -3673,7 +3673,7 @@ mod tests {
 		});
 	}
 
-	#[gpui::test]
+	#[gpui_kit::test]
 	async fn add_effect_appends_a_named_card(cx: &mut TestAppContext) {
 		cx.update(|app| {
 			let engine = demo_engine(app);
@@ -3697,7 +3697,7 @@ mod tests {
 		});
 	}
 
-	#[gpui::test]
+	#[gpui_kit::test]
 	async fn mock_split_at_playhead_and_ripple_delete(cx: &mut TestAppContext) {
 		cx.update(|app| {
 			let engine = demo_engine(app);
@@ -3743,7 +3743,7 @@ mod tests {
 		});
 	}
 
-	#[gpui::test]
+	#[gpui_kit::test]
 	async fn demo_graph_has_eight_nodes_and_six_edges(cx: &mut TestAppContext) {
 		cx.update(|app| {
 			let engine = demo_engine(app);
@@ -3792,7 +3792,7 @@ mod tests {
 		});
 	}
 
-	#[gpui::test]
+	#[gpui_kit::test]
 	async fn can_connect_enforces_direction_type_duplicates_and_cycles(cx: &mut TestAppContext) {
 		cx.update(|app| {
 			let engine = demo_engine(app);
@@ -3835,7 +3835,7 @@ mod tests {
 		});
 	}
 
-	#[gpui::test]
+	#[gpui_kit::test]
 	async fn node_edits_apply_to_the_model(cx: &mut TestAppContext) {
 		cx.update(|app| {
 			let engine = demo_engine(app);
@@ -3911,7 +3911,7 @@ mod tests {
 		});
 	}
 
-	#[gpui::test]
+	#[gpui_kit::test]
 	async fn cpu_frame_is_cached_per_playhead_and_advances(cx: &mut TestAppContext) {
 		cx.update(|app| {
 			let engine = demo_engine(app);
@@ -3950,7 +3950,7 @@ mod tests {
 	// actions and the timeline ruler drag drive.
 	// -----------------------------------------------------------------------
 
-	#[gpui::test]
+	#[gpui_kit::test]
 	async fn marker_menu_actions_add_and_remove_at_playhead(cx: &mut TestAppContext) {
 		cx.update(|app| {
 			let engine = demo_engine(app);
@@ -3975,7 +3975,7 @@ mod tests {
 		});
 	}
 
-	#[gpui::test]
+	#[gpui_kit::test]
 	async fn workarea_menu_actions_set_and_clear(cx: &mut TestAppContext) {
 		cx.update(|app| {
 			let engine = demo_engine(app);
@@ -3999,7 +3999,7 @@ mod tests {
 		});
 	}
 
-	#[gpui::test]
+	#[gpui_kit::test]
 	async fn timeline_workarea_events_drive_the_mock_engine(cx: &mut TestAppContext) {
 		cx.update(|app| {
 			let engine = demo_engine(app);
@@ -4030,7 +4030,7 @@ mod tests {
 	/// 添加文本素材 on the mock: every call gets a fresh entry id, the ids
 	/// are listed by the bin as leaves labelled with the shared `文本`
 	/// node label (the drop path resolves them by name).
-	#[gpui::test]
+	#[gpui_kit::test]
 	async fn create_text_footage_lists_a_text_entry(cx: &mut TestAppContext) {
 		cx.update(|app| {
 			let engine = demo_engine(app);
@@ -4064,7 +4064,7 @@ mod tests {
 
 	/// Settings round trips: proxy toggle, OCIO config validation and the
 	/// cache-location clamp/trim rules.
-	#[gpui::test]
+	#[gpui_kit::test]
 	async fn settings_and_cache_location_round_trip(cx: &mut TestAppContext) {
 		cx.update(|app| {
 			let engine = demo_engine(app);
@@ -4097,7 +4097,7 @@ mod tests {
 
 	/// Proxy rows/states/generation/deletion and the custom-parameter
 	/// storage paths.
-	#[gpui::test]
+	#[gpui_kit::test]
 	async fn proxy_paths(cx: &mut TestAppContext) {
 		cx.update(|app| {
 			let engine = demo_engine(app);
@@ -4155,7 +4155,7 @@ mod tests {
 
 	/// Project lifecycle mutators, generator/footage drops, text footage,
 	/// the work area and every effect-stack event arm.
-	#[gpui::test]
+	#[gpui_kit::test]
 	async fn engine_mutator_and_effect_event_paths(cx: &mut TestAppContext) {
 		let _lock = crate::oakui::graphops::test_lock();
 		cx.update(|app| {
@@ -4278,7 +4278,7 @@ mod tests {
 				e.apply_effect_event(
 					&EffectStackEvent::ContextMenuRequested {
 						effect: id,
-						position: gpui::Point::new(px(0.0), px(0.0)),
+						position: gpui_kit::Point::new(px(0.0), px(0.0)),
 					},
 					cx,
 				);
@@ -4292,7 +4292,7 @@ mod tests {
 
 	/// Sync eligibility/commands, clip→footage mapping, the multicam
 	/// surface and the demo's unsupported default transition.
-	#[gpui::test]
+	#[gpui_kit::test]
 	async fn sync_and_multicam_paths(cx: &mut TestAppContext) {
 		let _lock = crate::oakui::graphops::test_lock();
 		cx.update(|app| {
@@ -4329,7 +4329,7 @@ mod tests {
 
 	/// The node editor's ignored events, background click, unmapped
 	/// selections and the selection helpers.
-	#[gpui::test]
+	#[gpui_kit::test]
 	async fn node_graph_ignored_events_selection_and_reach_cycles(cx: &mut TestAppContext) {
 		let _lock = crate::oakui::graphops::test_lock();
 		cx.update(|app| {
@@ -4427,9 +4427,9 @@ mod tests {
 	/// Every timeline edit event the widget can emit applies to the mock
 	/// model: playhead, both trim edges, split, ripple trim, roll (valid and
 	/// rejected), slide, slip, moves, track height and toggles.
-	#[gpui::test]
+	#[gpui_kit::test]
 	async fn timeline_edit_events_apply_to_the_mock_model(cx: &mut TestAppContext) {
-		use gpui::timeline::TrackHeaderEvent;
+		use crate::widgets::timeline::TrackHeaderEvent;
 		cx.update(|app| {
 			let engine = demo_engine(app);
 			let clip = |app: &App, track: usize, id: u64| -> Option<MockClip> {
@@ -4668,7 +4668,7 @@ mod tests {
 	}
 
 	/// Track helpers, clip linking, the sync guard/commands and eligibility.
-	#[gpui::test]
+	#[gpui_kit::test]
 	async fn track_link_and_sync_helpers(cx: &mut TestAppContext) {
 		cx.update(|app| {
 			let engine = demo_engine(app);
@@ -4716,7 +4716,7 @@ mod tests {
 	/// Adjustment layers, generator/footage drops without a target track,
 	/// `add_effect`'s unknown type, `add_node_at`, the legacy `start_export`
 	/// wrapper and the demo multicam's create/enable/disable paths.
-	#[gpui::test]
+	#[gpui_kit::test]
 	async fn drop_add_and_legacy_export_paths(cx: &mut TestAppContext) {
 		let _lock = crate::oakui::graphops::test_lock();
 		cx.update(|app| {

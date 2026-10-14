@@ -30,16 +30,16 @@
 //! [`crate::actions::entry_for_menu_id`] splits the two worlds at
 //! dispatch time.
 
-pub use gpui_widgets::menu::{
+pub use crate::widgets::menu::{
 	ContextMenu, ContextMenuEvent, Menu, MenuBar, MenuBarEntry, MenuBarEvent, MenuItem,
 };
-use gpui_widgets::viewer::{SafeMargins, ViewerZoom, WaveformMode, VIEWER_ZOOM_LEVELS};
+use crate::widgets::viewer::{SafeMargins, ViewerZoom, WaveformMode, VIEWER_ZOOM_LEVELS};
 
 // ---------------------------------------------------------------------------
 // Context-menu plumbing
 // ---------------------------------------------------------------------------
 
-use gpui::{App, AppContext, Context, Entity, EventEmitter, Pixels, Point, Window};
+use gpui_kit::{App, AppContext, Context, Entity, EventEmitter, Pixels, Point, Window};
 /// A registry-backed context-menu item was triggered: the panel re-emits it
 /// so the app shell dispatches it like a menu-bar click (after pointing
 /// `focused_panel` at the panel, since a right-click does not emit
@@ -294,7 +294,7 @@ pub const LOCAL_VIEWER_SHOW_FPS: usize = 2332;
 pub const LOCAL_VIEWER_SAVE_FRAME: usize = 2333;
 
 /// The zoom submenu item id for `level` (one of
-/// [`gpui_widgets::viewer::VIEWER_ZOOM_LEVELS`]).
+/// [`crate::widgets::viewer::VIEWER_ZOOM_LEVELS`]).
 pub fn viewer_zoom_level_id(index: usize) -> usize {
 	LOCAL_VIEWER_ZOOM_LEVELS_BASE + index
 }

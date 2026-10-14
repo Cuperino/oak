@@ -24,11 +24,11 @@
 //! Icons render on a 16px logical grid from the 32px (2×) files; buttons give
 //! them a 24px hit target and a localized tooltip.
 //!
-//! [`OakTheme`]: gpui_widgets::theme::OakTheme
+//! [`OakTheme`]: crate::widgets::theme::OakTheme
 
 use std::path::PathBuf;
 
-use gpui::App;
+use gpui_kit::App;
 
 /// Icon file names (without the `.png` suffix), mirroring the legacy set.
 pub const ICON_ARROW: &str = "arrow";
@@ -56,7 +56,7 @@ pub const ICON_FF: &str = "ff";
 /// the dev checkout as a fallback. Absolute, so it works from any working
 /// directory.
 pub fn icon_path(name: &str, cx: &App) -> PathBuf {
-	let theme = gpui_widgets::theme::current_theme(cx);
+	let theme = crate::widgets::theme::current_theme(cx);
 	let family = if theme.name == "Olive Dark" {
 		"dark"
 	} else {
@@ -98,7 +98,7 @@ fn icon_root() -> &'static PathBuf {
 /// transport bar) resolve the same theme-aware paths. Call at startup before
 /// any window renders; re-registering after a theme switch is harmless.
 pub fn init(cx: &mut App) {
-	gpui_widgets::icons::set_resolver(
+	crate::widgets::icons::set_resolver(
 		std::sync::Arc::new(|name, cx| Some(icon_path(name, cx))),
 		cx,
 	);
@@ -146,17 +146,18 @@ mod tests {
 
 	/// The theme-aware path picks the dark family for the default dark theme
 	/// and the light family once a light theme is applied.
-	#[gpui::test]
-	fn icon_path_follows_the_active_theme(cx: &mut gpui::TestAppContext) {
+	#[gpui_kit::test]
+	fn icon_path_follows_the_active_theme(cx: &mut gpui_kit::TestAppContext) {
 		cx.update(|app| {
-			gpui_widgets::theme::apply_theme(app, &gpui_widgets::theme::OakTheme::olive_dark());
+			gpui_kit::init(app);
+			crate::widgets::theme::apply_theme(app, &crate::widgets::theme::OakTheme::olive_dark());
 			let dark = icon_path(ICON_PLAY, app);
 			assert!(
 				dark.ends_with("dark/play.png"),
 				"dark theme → dark family, got {dark:?}"
 			);
 
-			gpui_widgets::theme::apply_theme(app, &gpui_widgets::theme::OakTheme::olive_light());
+			crate::widgets::theme::apply_theme(app, &crate::widgets::theme::OakTheme::olive_light());
 			let light = icon_path(ICON_PLAY, app);
 			assert!(
 				light.ends_with("light/play.png"),

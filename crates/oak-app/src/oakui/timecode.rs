@@ -24,11 +24,11 @@
 //!
 //! # Timecode convention
 //!
-//! `HH:MM:SS:FF`, non-drop-frame, matching `gpui::timeline::format_timecode`
+//! `HH:MM:SS:FF`, non-drop-frame, matching `crate::widgets::timeline::format_timecode`
 //! and Oak's existing viewer widgets. Drop-frame timecode for NTSC rates is
-//! future work (see `gpui::timeline::time`).
+//! future work (see `crate::widgets::timeline::time`).
 
-use gpui::timeline::{Frame, FrameRate};
+use crate::widgets::timeline::{Frame, FrameRate};
 
 /// Formats `frame` as non-drop-frame timecode `HH:MM:SS:FF`.
 ///

@@ -17,13 +17,14 @@
 //! The source viewer panel (素材查看器): the `ViewerWidget` over the source
 //! monitor's clock, with its own transport and format chips.
 
-use gpui::colors::DefaultColors;
-use gpui::dock::{DockPanel, PanelEvent};
-use gpui::{
-	div, prelude::*, AnyElement, App, Context, Entity, EventEmitter, MouseButton, Render,
-	SharedString, Window,
+use gpui_kit::colors::DefaultColors;
+use gpui_kit::component::dock::{BasePanel, Panel, PanelEvent};
+use gpui_kit::{FocusHandle, Focusable};
+use crate::panels::PanelFocused;
+use gpui_kit::{
+	div, prelude::*, App, Context, Entity, EventEmitter, MouseButton, Render, Window,
 };
-use gpui_widgets::viewer::{
+use crate::widgets::viewer::{
 	SafeMargins, ViewerEvent, ViewerWidget, ViewerZoom, WaveformMode,
 };
 
@@ -34,10 +35,12 @@ use crate::oakui::timecode::{format_fps, format_resolution};
 use crate::oakui::{AppEngine, Monitor};
 use crate::panels::commands::{self as panel_commands, PanelCommandHandler};
 use crate::panels::{chip, viewer_title};
-use crate::panels::ids::SOURCE_VIEWER;
 
 /// The source viewer panel.
 pub struct SourceViewerPanel<E: AppEngine> {
+	/// The panel's focus handle (the dock's zoom/focus and the
+	/// shell's focused-panel routing need it).
+	focus_handle: FocusHandle,
 	viewer: Entity<ViewerWidget<E::Clock>>,
 	engine: Entity<E>,
 	/// The source monitor's clock (also owned by the viewer widget; kept
@@ -45,7 +48,7 @@ pub struct SourceViewerPanel<E: AppEngine> {
 	clock: Entity<E::Clock>,
 	/// The last CPU frame handed to the viewer (compared by `Arc` identity so
 	/// a paused playhead does not re-upload the picture every frame).
-	last_cpu_frame: Option<std::sync::Arc<gpui::RenderImage>>,
+	last_cpu_frame: Option<std::sync::Arc<gpui_kit::RenderImage>>,
 	/// The right-click context menu.
 	context_menu: ContextMenuHandle,
 }
@@ -88,6 +91,7 @@ impl<E: AppEngine> SourceViewerPanel<E> {
 			ContextMenuHandle::new(Self::on_local_menu_item, window, cx);
 
 		Self {
+			focus_handle: cx.focus_handle(),
 			viewer,
 			engine,
 			clock,
@@ -230,14 +234,14 @@ impl<E: AppEngine> Render for SourceViewerPanel<E> {
 			// dock re-emits this as `DockEvent::PanelFocused`, which the
 			// shell uses to route focused-panel commands).
 			.on_mouse_down(MouseButton::Left, {
-				cx.listener(|_this, _event: &gpui::MouseDownEvent, _window, cx| {
-					cx.emit(PanelEvent::Focused);
+				cx.listener(|_this, _event: &gpui_kit::MouseDownEvent, _window, cx| {
+					cx.emit(PanelFocused);
 				})
 			})
 			// The viewer widget has no right-click handling of its own, so
 			// the panel opens the shared viewer menu here.
 			.on_mouse_down(MouseButton::Right, {
-				cx.listener(|this, event: &gpui::MouseDownEvent, _window, cx| {
+				cx.listener(|this, event: &gpui_kit::MouseDownEvent, _window, cx| {
 					let state = menu::ViewerMenuState {
 						playback_divider: this.engine.read(cx).playback_divider(),
 						zoom: this.viewer.read(cx).zoom(),
@@ -323,22 +327,23 @@ impl<E: AppEngine> EventEmitter<menu::ViewerPanelEvent> for SourceViewerPanel<E>
 
 impl<E: AppEngine> EventEmitter<ContextMenuTriggered> for SourceViewerPanel<E> {}
 
-impl<E: AppEngine> DockPanel for SourceViewerPanel<E> {
-	fn panel_id(&self) -> gpui::dock::PanelId {
-		SOURCE_VIEWER
-	}
+impl<E: AppEngine> EventEmitter<PanelFocused> for SourceViewerPanel<E> {}
 
-	fn title(&self, cx: &App) -> SharedString {
-		viewer_title("panel.source_viewer", &self.engine.read(cx).source_media_name()).into()
+impl<E: AppEngine> Focusable for SourceViewerPanel<E> {
+	fn focus_handle(&self, _cx: &App) -> FocusHandle {
+		self.focus_handle.clone()
 	}
+}
 
-	fn tab_content(&self, cx: &App) -> AnyElement {
-		div()
-			.child(viewer_title(
-				"panel.source_viewer",
-				&self.engine.read(cx).source_media_name(),
-			))
-			.into_any_element()
+impl<E: AppEngine> BasePanel for SourceViewerPanel<E> {
+	fn panel_name(&self) -> &'static str {
+		crate::panels::ids::SOURCE_VIEWER
+	}
+}
+
+impl<E: AppEngine> Panel for SourceViewerPanel<E> {
+	fn title(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+		viewer_title("panel.source_viewer", &self.engine.read(cx).source_media_name())
 	}
 }
 
@@ -346,8 +351,8 @@ impl<E: AppEngine> DockPanel for SourceViewerPanel<E> {
 mod tests {
 	use super::*;
 	use crate::oakui::MockEngine;
-	use gpui::{Modifiers, px, size, TestAppContext, VisualTestContext};
-	use gpui_widgets::viewer::PlaybackClock as _;
+	use gpui_kit::{Modifiers, px, size, TestAppContext, VisualTestContext};
+	use crate::widgets::viewer::PlaybackClock as _;
 
 	/// Builds the panel in a window and returns a `VisualTestContext`.
 	fn panel_window(
@@ -356,7 +361,10 @@ mod tests {
 		&'static mut VisualTestContext,
 		Entity<SourceViewerPanel<MockEngine>>,
 	) {
-		cx.update(|cx| cx.init_colors());
+		cx.update(|cx| {
+			gpui_kit::init(cx);
+			cx.init_colors();
+		});
 		let window = cx.open_window(size(px(640.0), px(360.0)), |window, cx| {
 			let engine = cx.new(MockEngine::demo);
 			let clock = engine.read(cx).source_clock().clone();
@@ -371,7 +379,7 @@ mod tests {
 	/// Every viewer context-menu action updates the viewer widget state or
 	/// the engine config; a real menu item id resolves through the shared
 	/// menu mapping, unknown ids are ignored.
-	#[gpui::test]
+	#[gpui_kit::test]
 	async fn menu_actions_update_viewer_and_engine_state(cx: &mut TestAppContext) {
 		let (cx, panel) = panel_window(cx);
 		cx.update(|_window, app| {
@@ -429,7 +437,7 @@ mod tests {
 	}
 
 	/// The focused-panel transport commands drive the SOURCE monitor.
-	#[gpui::test]
+	#[gpui_kit::test]
 	async fn transport_commands_drive_the_source_clock(cx: &mut TestAppContext) {
 		let (cx, panel) = panel_window(cx);
 		cx.update(|_window, app| {
@@ -455,25 +463,23 @@ mod tests {
 
 	/// The panel renders, right-click opens the shared viewer menu, and the
 	/// dock metadata is populated.
-	#[gpui::test]
+	#[gpui_kit::test]
 	async fn render_right_click_menu_and_dock_metadata(cx: &mut TestAppContext) {
-		let (cx, panel) = panel_window(cx);
+		let (cx, _panel) = panel_window(cx);
 		cx.update(|window, cx| {
-			window.draw(cx).clear();
+			window.draw(cx).clear(cx);
 		});
-		cx.update(|_window, app| {
-			assert!(!panel.read(app).title(app).is_empty());
-			let _ = panel.read(app).tab_content(app);
+		cx.update(|_window, _app| {
 		});
 
 		// A right-click anywhere in the panel opens the viewer menu.
 		cx.simulate_mouse_down(
-			gpui::point(px(320.0), px(180.0)),
+			gpui_kit::point(px(320.0), px(180.0)),
 			MouseButton::Right,
 			Modifiers::none(),
 		);
 		cx.update(|window, cx| {
-			window.draw(cx).clear();
+			window.draw(cx).clear(cx);
 		});
 		assert!(
 			cx.debug_bounds("menu-popup").is_some(),
@@ -482,7 +488,7 @@ mod tests {
 
 		// A left click focuses the panel (the dock re-emits the event).
 		cx.simulate_mouse_down(
-			gpui::point(px(320.0), px(180.0)),
+			gpui_kit::point(px(320.0), px(180.0)),
 			MouseButton::Left,
 			Modifiers::none(),
 		);

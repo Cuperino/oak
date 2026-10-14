@@ -163,7 +163,7 @@ pub fn tr_or(key: &str, fallback: &str) -> String {
 }
 
 /// The keys the gpui widget crates localize through
-/// `gpui_widgets::i18n` (viewer transport labels, effect-stack empty state).
+/// `crate::widgets::i18n` (viewer transport labels, effect-stack empty state).
 pub const WIDGET_KEYS: &[&str] = &[
 	"viewer.safe_frames",
 	"viewer.zoom",
@@ -182,13 +182,13 @@ pub const WIDGET_KEYS: &[&str] = &[
 ];
 
 /// Installs the active language's widget strings into the
-/// `gpui_widgets::i18n` string-table hook.
+/// `crate::widgets::i18n` string-table hook.
 pub fn sync_widgets() {
-	let mut table = gpui_widgets::i18n::StringTable::new();
+	let mut table = crate::widgets::i18n::StringTable::new();
 	for key in WIDGET_KEYS {
 		table.insert((*key).to_string(), tr(key).to_string());
 	}
-	gpui_widgets::i18n::set_table(table);
+	crate::widgets::i18n::set_table(table);
 }
 
 // ---------------------------------------------------------------------------

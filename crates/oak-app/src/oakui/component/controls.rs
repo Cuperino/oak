@@ -35,15 +35,17 @@
 //! Colours come from `App::default_colors` (the app theme), matching the
 //! text inputs and menus.
 
-use gpui::{
+use gpui_kit::{
 	colors::DefaultColors,
 	canvas, div, px, Context, ElementId, EventEmitter, FocusHandle, IntoElement, InteractiveElement, ParentElement,
 	Entity, KeyDownEvent, MouseButton, MouseDownEvent, MouseUpEvent,
 	Render, ScrollWheelEvent, SharedString, StatefulInteractiveElement, Styled, Window, AppContext, Focusable,
 };
-use gpui::prelude::FluentBuilder;
+use gpui_kit::prelude::FluentBuilder;
+use gpui_kit::base::input::InputState;
+use gpui_kit::component::input::InputEvent;
 
-pub use gpui_widgets::value::{SliderValue, ValueKind};
+pub use crate::widgets::value::{SliderValue, ValueKind};
 
 /// The colour swatch + deferred popup picker (the params panel's
 /// implementation, surfaced here so effect controls live under
@@ -51,7 +53,7 @@ pub use gpui_widgets::value::{SliderValue, ValueKind};
 pub use crate::panels::ofx_params::OfxColorPicker;
 
 /// The value model of a [`Slider`] (range, step, current value).
-pub use gpui_widgets::slider::SliderModel;
+pub use crate::widgets::slider::SliderModel;
 
 /// Events emitted by a [`Slider`].
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -90,7 +92,7 @@ struct SliderDrag {
 struct SliderDragGhost;
 
 impl Render for SliderDragGhost {
-	fn render(&mut self, _window: &mut Window, _cx: &mut gpui::Context<Self>) -> impl IntoElement {
+	fn render(&mut self, _window: &mut Window, _cx: &mut gpui_kit::Context<Self>) -> impl IntoElement {
 		div()
 	}
 }
@@ -116,7 +118,7 @@ pub struct Slider {
 	model: SliderModel,
 	focus: FocusHandle,
 	/// The numeric editor, while a double-click edit is open.
-	edit: Option<Entity<gpui_elements::editable_text::EditableTextState>>,
+	edit: Option<Entity<InputState>>,
 	/// True while a drag is in flight (to report start/finish).
 	dragging: bool,
 	/// Whether the open editor should cancel (Escape) instead of commit
@@ -124,7 +126,7 @@ pub struct Slider {
 	edit_cancel: bool,
 	/// The persistent value box: shows the current value and accepts typed
 	/// input (Enter commits, exactly like the double-click editor).
-	value_editor: Entity<gpui_elements::editable_text::EditableTextState>,
+	value_editor: Entity<InputState>,
 }
 
 impl Slider {
@@ -135,14 +137,27 @@ impl Slider {
 		window: &mut Window,
 		cx: &mut Context<Self>,
 	) -> Self {
-		let _ = window;
 		let display = Self::display_value(&model);
-		let value_editor = cx.new(|cx| {
-			gpui_elements::editable_text::EditableTextState::new(
-				gpui_elements::editable_text::StringStorage::from(display.to_string()),
-				cx,
-			)
+		let value_editor = cx.new(|cx| InputState::new(window, cx));
+		value_editor.update(cx, |editor, cx| {
+			editor.set_value(display.to_string(), window, cx);
 		});
+		// The input consumes Enter; commit on its PressEnter event.
+		cx.subscribe_in(
+			&value_editor,
+			window,
+			|this, _editor, event: &InputEvent, window, cx| {
+				if matches!(event, InputEvent::PressEnter { .. }) {
+					let text = this.value_editor.read(cx).value().to_string();
+					this.apply_text(&text, cx);
+					// Move focus to the slider so the box re-syncs to the
+					// normalized display text on the next frame.
+					let focus = this.focus.clone();
+					window.focus(&focus, cx);
+				}
+			},
+		)
+		.detach();
 		Self {
 			control,
 			model,
@@ -170,6 +185,13 @@ impl Slider {
 		self.model.value()
 	}
 
+	/// Whether a drag is in flight (the params panel skips its
+	/// engine-snapshot re-sync while it is — otherwise the read-back value
+	/// fights the pointer and the thumb stops following).
+	pub fn is_dragging(&self) -> bool {
+		self.dragging
+	}
+
 	fn emit_changed(&mut self, cx: &mut Context<Self>) {
 		cx.emit(SliderEvent::ValueChanged {
 			control: self.control,
@@ -191,11 +213,9 @@ impl Slider {
 	/// Open the numeric editor with the current value as its text.
 	fn begin_edit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
 		let text = self.display();
-		let editor = cx.new(|cx| {
-			gpui_elements::editable_text::EditableTextState::new(
-				gpui_elements::editable_text::StringStorage::from(text.to_string()),
-				cx,
-			)
+		let editor = cx.new(|cx| InputState::new(window, cx));
+		editor.update(cx, |editor, cx| {
+			editor.set_value(text.to_string(), window, cx);
 		});
 		// Commit (or cancel) when the editor loses focus.
 		let this_control = self.control;
@@ -203,7 +223,7 @@ impl Slider {
 		let focus = editor.read(cx).focus_handle(cx);
 		cx.on_focus_out(&focus, window, move |this: &mut Self, _event, _window, cx| {
 			if let Some(editor) = weak.upgrade() {
-				let text = editor.read(cx).as_str().to_string();
+				let text = editor.read(cx).value().to_string();
 				if !this.edit_cancel {
 					this.apply_text(&text, cx);
 				}
@@ -262,7 +282,7 @@ impl Render for Slider {
 		// frame so the click-to-jump handler can map a click x to a value
 		// (mouse events carry no bounds of their own).
 		let track_bounds =
-			std::sync::Arc::new(std::sync::RwLock::new(None::<gpui::Bounds<gpui::Pixels>>));
+			std::sync::Arc::new(std::sync::RwLock::new(None::<gpui_kit::Bounds<gpui_kit::Pixels>>));
 		let drag_payload = std::sync::Arc::new(std::sync::RwLock::new(SliderDrag {
 			control,
 			first_x: 0.0,
@@ -334,7 +354,7 @@ impl Render for Slider {
 					this.finish_drag(cx);
 				}),
 			)
-			.on_click(cx.listener(|this, event: &gpui::ClickEvent, window, cx| {
+			.on_click(cx.listener(|this, event: &gpui_kit::ClickEvent, window, cx| {
 				if event.click_count() >= 2 {
 					this.begin_edit(window, cx);
 				}
@@ -377,10 +397,10 @@ impl Render for Slider {
 			)
 			.on_scroll_wheel(cx.listener(|this, event: &ScrollWheelEvent, _window, cx| {
 				let dir = match event.delta {
-					gpui::ScrollDelta::Pixels(p) => {
+					gpui_kit::ScrollDelta::Pixels(p) => {
 						if f32::from(p.y) > 0.0 { 1 } else { -1 }
 					}
-					gpui::ScrollDelta::Lines(l) => {
+					gpui_kit::ScrollDelta::Lines(l) => {
 						if l.y > 0.0 { 1 } else { -1 }
 					}
 				};
@@ -435,7 +455,7 @@ impl Render for Slider {
 			// Numeric editor: an app text input bound to the editor state.
 			track = track.child(
 				crate::oakui::component::text_input(
-					gpui::ElementId::named_usize("oak-slider-edit", control),
+					gpui_kit::ElementId::named_usize("oak-slider-edit", control),
 					cx,
 				)
 				.state(editor.downgrade())
@@ -470,10 +490,10 @@ impl Render for Slider {
 		let display_text = self.display();
 		let value_editor = self.value_editor.clone();
 		if !value_editor.read(cx).focus_handle(cx).is_focused(window)
-			&& value_editor.read(cx).as_str() != display_text.as_ref()
+			&& value_editor.read(cx).value() != display_text.as_ref()
 		{
 			value_editor.update(cx, |editor, cx| {
-				editor.emplace(display_text.as_ref(), cx);
+				editor.set_value(display_text.as_ref(), window, cx);
 			});
 		}
 		let value_box = div()
@@ -499,7 +519,7 @@ impl Render for Slider {
 				if event.keystroke.key.as_str() != "enter" {
 					return;
 				}
-				let text = this.value_editor.read(cx).as_str().to_string();
+				let text = this.value_editor.read(cx).value().to_string();
 				this.apply_text(&text, cx);
 				// Move focus to the slider so the box re-syncs to the
 				// normalized display text on the next frame.
@@ -620,22 +640,22 @@ impl CheckBox {
 /// panel where the theme border is a light blue).
 /// Kept as a pure function so the unit test below pins the colours without
 /// needing pixel reads.
-fn checkbox_fill(colors: &gpui::colors::Colors, checked: bool) -> gpui::Rgba {
+fn checkbox_fill(colors: &gpui_kit::colors::Colors, checked: bool) -> gpui_kit::Rgba {
 	if checked {
 		colors.selected
 	} else {
-		gpui::rgba(0xFFFFFF)
+		gpui_kit::rgba(0xFFFFFF)
 	}
 }
 
 /// The checkbox's border: black around the white unchecked box (the theme
 /// border reads as light blue on the dark panel), the theme border when
 /// checked.
-fn checkbox_border(colors: &gpui::colors::Colors, checked: bool) -> gpui::Rgba {
+fn checkbox_border(colors: &gpui_kit::colors::Colors, checked: bool) -> gpui_kit::Rgba {
 	if checked {
 		colors.border
 	} else {
-		gpui::rgba(0x000000)
+		gpui_kit::rgba(0x000000)
 	}
 }
 
@@ -911,7 +931,7 @@ impl Render for ComboBox {
 			// looks transparent (the preferences render-backend dropdown
 			// regression).
 			root = root.child(
-				gpui::deferred(
+				gpui_kit::deferred(
 					div()
 						.absolute()
 						.left(px(0.0))
@@ -997,7 +1017,7 @@ pub struct SpinBox {
 	model: SliderModel,
 	focus: FocusHandle,
 	/// The numeric editor, while a direct-entry edit is open.
-	edit: Option<Entity<gpui_elements::editable_text::EditableTextState>>,
+	edit: Option<Entity<InputState>>,
 	/// Whether the open editor should cancel (Escape) instead of commit
 	/// on blur.
 	edit_cancel: bool,
@@ -1044,17 +1064,15 @@ impl SpinBox {
 	/// starts a fresh entry, double-click edits the current value).
 	fn begin_edit(&mut self, seed: Option<String>, window: &mut Window, cx: &mut Context<Self>) {
 		let text = seed.unwrap_or_else(|| self.display().to_string());
-		let editor = cx.new(|cx| {
-			gpui_elements::editable_text::EditableTextState::new(
-				gpui_elements::editable_text::StringStorage::from(text),
-				cx,
-			)
+		let editor = cx.new(|cx| InputState::new(window, cx));
+		editor.update(cx, |editor, cx| {
+			editor.set_value(text, window, cx);
 		});
 		let weak = editor.downgrade();
 		let focus = editor.read(cx).focus_handle(cx);
 		cx.on_focus_out(&focus, window, move |this: &mut Self, _event, _window, cx| {
 			if let Some(editor) = weak.upgrade() {
-				let text = editor.read(cx).as_str().to_string();
+				let text = editor.read(cx).value().to_string();
 				if !this.edit_cancel {
 					this.apply_text(&text, cx);
 				}
@@ -1118,7 +1136,7 @@ impl Render for SpinBox {
 			// While editing, the text input replaces the readout (not stacks
 			// under it).
 			.when(self.edit.is_none(), |root| root.child(text))
-			.on_click(cx.listener(|this, event: &gpui::ClickEvent, window, cx| {
+			.on_click(cx.listener(|this, event: &gpui_kit::ClickEvent, window, cx| {
 				if event.click_count() >= 2 {
 					this.begin_edit(None, window, cx);
 				}
@@ -1136,10 +1154,10 @@ impl Render for SpinBox {
 					return;
 				}
 				let dir = match event.delta {
-					gpui::ScrollDelta::Pixels(p) => {
+					gpui_kit::ScrollDelta::Pixels(p) => {
 						if f32::from(p.y) > 0.0 { 1 } else { -1 }
 					}
-					gpui::ScrollDelta::Lines(l) => {
+					gpui_kit::ScrollDelta::Lines(l) => {
 						if l.y > 0.0 { 1 } else { -1 }
 					}
 				};
@@ -1169,7 +1187,7 @@ impl Render for SpinBox {
 						let starts_number = key.len() == 1
 							&& key.chars().next().is_some_and(|c| {
 								c.is_ascii_digit() || c == '-' || c == '.'
-							}) && event.keystroke.modifiers == gpui::Modifiers::none();
+							}) && event.keystroke.modifiers == gpui_kit::Modifiers::none();
 						if starts_number {
 							this.begin_edit(Some(key.clone()), window, cx);
 						}
@@ -1206,15 +1224,15 @@ mod tests {
 	/// renderer does not expose.
 	#[test]
 	fn checkbox_fill_uses_theme_colors() {
-		let dark = gpui::colors::Colors::dark();
+		let dark = gpui_kit::colors::Colors::dark();
 		assert_eq!(
 			checkbox_fill(&dark, false),
-			gpui::rgba(0xFFFFFF),
+			gpui_kit::rgba(0xFFFFFF),
 			"an unchecked box is white"
 		);
 		assert_eq!(
 			checkbox_border(&dark, false),
-			gpui::rgba(0x000000),
+			gpui_kit::rgba(0x000000),
 			"an unchecked box has a black border"
 		);
 		assert_eq!(
@@ -1224,16 +1242,16 @@ mod tests {
 		);
 		assert_eq!(checkbox_border(&dark, true), dark.border);
 
-		let light = gpui::colors::Colors::light();
-		assert_eq!(checkbox_fill(&light, false), gpui::rgba(0xFFFFFF));
-		assert_eq!(checkbox_border(&light, false), gpui::rgba(0x000000));
+		let light = gpui_kit::colors::Colors::light();
+		assert_eq!(checkbox_fill(&light, false), gpui_kit::rgba(0xFFFFFF));
+		assert_eq!(checkbox_border(&light, false), gpui_kit::rgba(0x000000));
 		assert_eq!(checkbox_fill(&light, true), light.selected);
 		assert_eq!(checkbox_border(&light, true), light.border);
 	}
 
 	// ---- widget interaction boundaries -----------------------------------
 
-	use gpui::{size, Modifiers, Subscription, TestAppContext, VisualTestContext};
+	use gpui_kit::{size, Modifiers, Subscription, TestAppContext, VisualTestContext};
 	use std::sync::{Arc, Mutex};
 
 	/// A view that renders one instance of every control, so the widget
@@ -1266,7 +1284,10 @@ mod tests {
 	fn probe_window(
 		cx: &mut TestAppContext,
 	) -> (&'static mut VisualTestContext, Entity<ControlsProbe>) {
-		cx.update(|cx| cx.init_colors());
+		cx.update(|cx| {
+			gpui_kit::init(cx);
+			cx.init_colors();
+		});
 		let window = cx.open_window(size(px(240.0), px(180.0)), |window, cx| {
 			let slider = cx.new(|cx| {
 				Slider::new(
@@ -1324,7 +1345,7 @@ mod tests {
 
 	/// Slider value clamping/snapping, text-edit parsing, drag reporting and
 	/// the display formatting of every value kind.
-	#[gpui::test]
+	#[gpui_kit::test]
 	async fn slider_edit_drag_and_display_paths(cx: &mut TestAppContext) {
 		let (visual, probe) = probe_window(cx);
 		let slider = visual.read(|app| probe.read(app).slider.clone());
@@ -1379,7 +1400,7 @@ mod tests {
 
 	/// Spin box clamping, text-edit parsing, the no-change emit path and
 	/// opening the inline editor.
-	#[gpui::test]
+	#[gpui_kit::test]
 	async fn spinbox_edit_and_emit_paths(cx: &mut TestAppContext) {
 		let (visual, probe) = probe_window(cx);
 		let spin = visual.read(|app| probe.read(app).spin.clone());
@@ -1408,13 +1429,13 @@ mod tests {
 	}
 
 	/// The checkbox's recorded `Toggled` events, in emission order.
-	fn check_events(probe: &Entity<ControlsProbe>, app: &gpui::App) -> Vec<CheckBoxEvent> {
+	fn check_events(probe: &Entity<ControlsProbe>, app: &gpui_kit::App) -> Vec<CheckBoxEvent> {
 		probe.read(app).check_events.lock().unwrap().clone()
 	}
 
 	/// Combo-box wrap-around selection, option replacement and the empty
 	/// list guard; checkbox request-only toggling.
-	#[gpui::test]
+	#[gpui_kit::test]
 	async fn combobox_and_checkbox_state_paths(cx: &mut TestAppContext) {
 		let (visual, probe) = probe_window(cx);
 		let combo = visual.read(|app| probe.read(app).combo.clone());
@@ -1515,11 +1536,11 @@ mod tests {
 
 	/// Every control paints in both state branches (unchecked/checked,
 	/// closed/open, idle/dragging).
-	#[gpui::test]
+	#[gpui_kit::test]
 	async fn controls_render_state_branches(cx: &mut TestAppContext) {
 		let (visual, probe) = probe_window(cx);
 		visual.update(|window, cx| {
-			window.draw(cx).clear();
+			window.draw(cx).clear(cx);
 		});
 
 		let (check, combo, slider) = visual.read(|app| {
@@ -1540,7 +1561,7 @@ mod tests {
 			});
 		});
 		visual.update(|window, cx| {
-			window.draw(cx).clear();
+			window.draw(cx).clear(cx);
 		});
 	}
 
@@ -1559,9 +1580,12 @@ mod tests {
 	/// Slider pointer paths (click-to-jump, middle-click reset, wheel) and
 	/// keyboard paths (steps, Home/End, unknown keys), plus the editor's
 	/// open/Escape branches.
-	#[gpui::test]
+	#[gpui_kit::test]
 	async fn slider_pointer_and_keyboard_paths(cx: &mut TestAppContext) {
-		cx.update(|cx| cx.init_colors());
+		cx.update(|cx| {
+			gpui_kit::init(cx);
+			cx.init_colors();
+		});
 		let window = cx.open_window(size(px(220.0), px(48.0)), |window, cx| {
 			let slider = cx.new(|cx| {
 				Slider::new(
@@ -1578,17 +1602,17 @@ mod tests {
 		let visual = VisualTestContext::from_window(window.into(), cx).into_mut();
 		let slider = visual.read(|app| probe.read(app).slider.clone());
 		visual.update(|window, cx| {
-			window.draw(cx).clear();
+			window.draw(cx).clear(cx);
 		});
 
 		// A single left click jumps to the clicked fraction.
 		visual.simulate_mouse_down(
-			gpui::point(px(140.0), px(9.0)),
+			gpui_kit::point(px(140.0), px(9.0)),
 			MouseButton::Left,
 			Modifiers::none(),
 		);
 		visual.simulate_mouse_up(
-			gpui::point(px(140.0), px(9.0)),
+			gpui_kit::point(px(140.0), px(9.0)),
 			MouseButton::Left,
 			Modifiers::none(),
 		);
@@ -1596,29 +1620,29 @@ mod tests {
 
 		// Middle click resets to the model's default.
 		visual.simulate_mouse_down(
-			gpui::point(px(20.0), px(9.0)),
+			gpui_kit::point(px(20.0), px(9.0)),
 			MouseButton::Middle,
 			Modifiers::none(),
 		);
 		visual.simulate_mouse_up(
-			gpui::point(px(20.0), px(9.0)),
+			gpui_kit::point(px(20.0), px(9.0)),
 			MouseButton::Middle,
 			Modifiers::none(),
 		);
 		assert!((visual.read(|app| slider.read(app).value().to_f64()) - 50.0).abs() < 1.0);
 
 		// Wheel steps the value (line delta), fine with Shift isn't needed.
-		visual.simulate_event(gpui::ScrollWheelEvent {
-			position: gpui::point(px(90.0), px(9.0)),
-			delta: gpui::ScrollDelta::Lines(gpui::Point::new(0.0, 1.0)),
+		visual.simulate_event(gpui_kit::ScrollWheelEvent {
+			position: gpui_kit::point(px(90.0), px(9.0)),
+			delta: gpui_kit::ScrollDelta::Lines(gpui_kit::Point::new(0.0, 1.0)),
 			modifiers: Modifiers::none(),
-			touch_phase: gpui::TouchPhase::Ended,
+			touch_phase: gpui_kit::TouchPhase::Ended,
 		});
-		visual.simulate_event(gpui::ScrollWheelEvent {
-			position: gpui::point(px(90.0), px(9.0)),
-			delta: gpui::ScrollDelta::Pixels(gpui::Point::new(px(0.0), px(-3.0))),
+		visual.simulate_event(gpui_kit::ScrollWheelEvent {
+			position: gpui_kit::point(px(90.0), px(9.0)),
+			delta: gpui_kit::ScrollDelta::Pixels(gpui_kit::Point::new(px(0.0), px(-3.0))),
 			modifiers: Modifiers::none(),
-			touch_phase: gpui::TouchPhase::Ended,
+			touch_phase: gpui_kit::TouchPhase::Ended,
 		});
 
 		// Keyboard: focus and step / jump to the range ends.
@@ -1637,11 +1661,11 @@ mod tests {
 
 		// Double-click opens the editor; Escape marks the pending edit as
 		// cancelled (blur then restores instead of committing).
-		visual.simulate_click(gpui::point(px(90.0), px(9.0)), Modifiers::none());
-		visual.simulate_click(gpui::point(px(90.0), px(9.0)), Modifiers::none());
+		visual.simulate_click(gpui_kit::point(px(90.0), px(9.0)), Modifiers::none());
+		visual.simulate_click(gpui_kit::point(px(90.0), px(9.0)), Modifiers::none());
 		visual.simulate_keystrokes("escape");
 		visual.update(|window, cx| {
-			window.draw(cx).clear();
+			window.draw(cx).clear(cx);
 		});
 	}
 
@@ -1649,9 +1673,9 @@ mod tests {
 
 	/// Simulate the second half of a double click: a mouse-up carrying
 	/// `click_count: 2` (the widget test helpers always send 1).
-	fn double_click_at(visual: &mut VisualTestContext, at: gpui::Point<gpui::Pixels>) {
+	fn double_click_at(visual: &mut VisualTestContext, at: gpui_kit::Point<gpui_kit::Pixels>) {
 		visual.simulate_mouse_down(at, MouseButton::Left, Modifiers::none());
-		visual.simulate_event(gpui::MouseUpEvent {
+		visual.simulate_event(gpui_kit::MouseUpEvent {
 			position: at,
 			modifiers: Modifiers::none(),
 			button: MouseButton::Left,
@@ -1662,9 +1686,12 @@ mod tests {
 	/// The slider's numeric editor: double click opens it (the render's
 	/// editor branch paints), blur commits the typed text, and the Escape +
 	/// blur pair restores the old value.
-	#[gpui::test]
+	#[gpui_kit::test]
 	async fn slider_editor_commit_and_cancel_paths(cx: &mut TestAppContext) {
-		cx.update(|cx| cx.init_colors());
+		cx.update(|cx| {
+			gpui_kit::init(cx);
+			cx.init_colors();
+		});
 		let window = cx.open_window(size(px(220.0), px(48.0)), |window, cx| {
 			let slider = cx.new(|cx| {
 				Slider::new(
@@ -1685,23 +1712,23 @@ mod tests {
 		cx.run_until_parked();
 		let slider = visual.read(|app| probe.read(app).slider.clone());
 		visual.update(|window, cx| {
-			window.draw(cx).clear();
+			window.draw(cx).clear(cx);
 		});
 
 		// Double click opens the editor.
-		double_click_at(visual, gpui::point(px(90.0), px(9.0)));
+		double_click_at(visual, gpui_kit::point(px(90.0), px(9.0)));
 		cx.run_until_parked();
 		assert!(visual.read(|app| slider.read(app).edit.is_some()), "editor open");
 
 		// A single click while the editor is open is ignored (the guard
 		// keeps double clicks from jumping the value under the editor).
 		visual.simulate_mouse_down(
-			gpui::point(px(20.0), px(9.0)),
+			gpui_kit::point(px(20.0), px(9.0)),
 			MouseButton::Left,
 			Modifiers::none(),
 		);
 		visual.simulate_mouse_up(
-			gpui::point(px(20.0), px(9.0)),
+			gpui_kit::point(px(20.0), px(9.0)),
 			MouseButton::Left,
 			Modifiers::none(),
 		);
@@ -1710,21 +1737,21 @@ mod tests {
 
 		// The open editor's render branch paints over the track.
 		visual.update(|window, cx| {
-			window.draw(cx).clear();
+			window.draw(cx).clear(cx);
 		});
 
 		// Type a value, then blur: the focus-out listener commits it.
 		let editor = visual
 			.read(|app| slider.read(app).edit.clone())
 			.expect("open editor");
-		visual.update(|_window, app| {
-			editor.update(app, |editor, cx| editor.emplace("75", cx));
-		});
+		visual.update(|window, app| {
+			editor.update(app, |editor, cx| editor.set_value("75", window, cx));
+	});
 		let focus = visual.read(|app| slider.read(app).focus.clone());
 		visual.update(|window, app| window.focus(&focus, app));
 		cx.run_until_parked();
 		visual.update(|window, cx| {
-			window.draw(cx).clear();
+			window.draw(cx).clear(cx);
 		});
 		assert_eq!(
 			visual.read(|app| slider.read(app).value()),
@@ -1737,20 +1764,20 @@ mod tests {
 		);
 
 		// Reopen, cancel with Escape, then blur: the old value survives.
-		double_click_at(visual, gpui::point(px(90.0), px(9.0)));
+		double_click_at(visual, gpui_kit::point(px(90.0), px(9.0)));
 		cx.run_until_parked();
 		let editor = visual
 			.read(|app| slider.read(app).edit.clone())
 			.expect("editor reopened");
-		visual.update(|_window, app| {
-			editor.update(app, |editor, cx| editor.emplace("3", cx));
-		});
+		visual.update(|window, app| {
+			editor.update(app, |editor, cx| editor.set_value("3", window, cx));
+	});
 		visual.simulate_keystrokes("escape");
 		cx.run_until_parked();
 		assert!(visual.read(|app| slider.read(app).edit_cancel));
 		visual.update(|window, app| window.focus(&focus, app));
 		visual.update(|window, cx| {
-			window.draw(cx).clear();
+			window.draw(cx).clear(cx);
 		});
 		assert_eq!(
 			visual.read(|app| slider.read(app).value()),
@@ -1762,9 +1789,12 @@ mod tests {
 
 	/// The persistent value box: focusing the embedded text input and
 	/// pressing Enter parses, clamps and commits the typed text.
-	#[gpui::test]
+	#[gpui_kit::test]
 	async fn slider_value_box_enter_commits(cx: &mut TestAppContext) {
-		cx.update(|cx| cx.init_colors());
+		cx.update(|cx| {
+			gpui_kit::init(cx);
+			cx.init_colors();
+		});
 		let window = cx.open_window(size(px(220.0), px(48.0)), |window, cx| {
 			let slider = cx.new(|cx| {
 				Slider::new(
@@ -1781,15 +1811,15 @@ mod tests {
 		let visual = VisualTestContext::from_window(window.into(), cx).into_mut();
 		let slider = visual.read(|app| probe.read(app).slider.clone());
 		visual.update(|window, cx| {
-			window.draw(cx).clear();
+			window.draw(cx).clear(cx);
 		});
 
 		let value_input = visual.read(|app| slider.read(app).value_editor.clone());
 		let input_focus = visual.read(|app| value_input.read(app).focus_handle(app));
 		visual.update(|window, app| window.focus(&input_focus, app));
-		visual.update(|_window, app| {
-			value_input.update(app, |editor, cx| editor.emplace("42", cx));
-		});
+		visual.update(|window, app| {
+			value_input.update(app, |editor, cx| editor.set_value("42", window, cx));
+	});
 		visual.simulate_keystrokes("enter");
 		cx.run_until_parked();
 		assert_eq!(
@@ -1823,9 +1853,12 @@ mod tests {
 		}
 	}
 
-	#[gpui::test]
+	#[gpui_kit::test]
 	async fn slider_drag_tracks_the_cursor_and_gates_other_sliders(cx: &mut TestAppContext) {
-		cx.update(|cx| cx.init_colors());
+		cx.update(|cx| {
+			gpui_kit::init(cx);
+			cx.init_colors();
+		});
 		let window = cx.open_window(size(px(480.0), px(120.0)), |window, cx| {
 			let model = || SliderModel::new(ValueKind::Integer, 0.0, 100.0, 10.0, 50.0);
 			let top = cx.new(|cx| Slider::new(1, model(), window, cx));
@@ -1840,12 +1873,12 @@ mod tests {
 			(probe.top.clone(), probe.bottom.clone())
 		});
 		visual.update(|window, cx| {
-			window.draw(cx).clear();
+			window.draw(cx).clear(cx);
 		});
 
 		let move_to = |visual: &mut VisualTestContext, x: f32, y: f32, shift: bool| {
 			visual.simulate_mouse_move(
-				gpui::point(px(x), px(y)),
+				gpui_kit::point(px(x), px(y)),
 				MouseButton::Left,
 				if shift { Modifiers::shift() } else { Modifiers::none() },
 			);
@@ -1854,7 +1887,7 @@ mod tests {
 		// Drag the top slider right: gpui starts the gesture after the
 		// threshold move, the following moves track the cursor 1:1.
 		visual.simulate_mouse_down(
-			gpui::point(px(60.0), px(9.0)),
+			gpui_kit::point(px(60.0), px(9.0)),
 			MouseButton::Left,
 			Modifiers::none(),
 		);
@@ -1864,7 +1897,7 @@ mod tests {
 		assert!(visual.read(|app| top.read(app).dragging), "drag started");
 		// The drag ghost renders while the gesture is in flight.
 		visual.update(|window, cx| {
-			window.draw(cx).clear();
+			window.draw(cx).clear(cx);
 		});
 		// Move over the second slider: its handler must ignore the pass.
 		move_to(visual, 360.0, 69.0, false);
@@ -1876,7 +1909,7 @@ mod tests {
 		);
 		assert!(!visual.read(|app| bottom.read(app).dragging));
 		visual.simulate_mouse_up(
-			gpui::point(px(360.0), px(69.0)),
+			gpui_kit::point(px(360.0), px(69.0)),
 			MouseButton::Left,
 			Modifiers::none(),
 		);
@@ -1887,14 +1920,14 @@ mod tests {
 
 		// Middle click resets; a Shift drag moves 1/10 as far.
 		visual.simulate_mouse_down(
-			gpui::point(px(30.0), px(9.0)),
+			gpui_kit::point(px(30.0), px(9.0)),
 			MouseButton::Middle,
 			Modifiers::none(),
 		);
 		cx.run_until_parked();
 		assert_eq!(visual.read(|app| top.read(app).value()), SliderValue::Integer(50));
 		visual.simulate_mouse_down(
-			gpui::point(px(60.0), px(9.0)),
+			gpui_kit::point(px(60.0), px(9.0)),
 			MouseButton::Left,
 			Modifiers::none(),
 		);
@@ -1902,7 +1935,7 @@ mod tests {
 		move_to(visual, 240.0, 9.0, true);
 		move_to(visual, 360.0, 9.0, true);
 		visual.simulate_mouse_up(
-			gpui::point(px(360.0), px(9.0)),
+			gpui_kit::point(px(360.0), px(9.0)),
 			MouseButton::Left,
 			Modifiers::shift(),
 		);
@@ -1916,7 +1949,7 @@ mod tests {
 
 	/// The checkbox keyboard path: Space / Enter request the toggle (the
 	/// state stays put — the host applies it), other keys are ignored.
-	#[gpui::test]
+	#[gpui_kit::test]
 	async fn checkbox_keyboard_requests_the_toggle(cx: &mut TestAppContext) {
 		let (visual, probe) = probe_window(cx);
 		let check = visual.read(|app| probe.read(app).check.clone());
@@ -1980,9 +2013,12 @@ mod tests {
 		}
 	}
 
-	#[gpui::test]
+	#[gpui_kit::test]
 	async fn combobox_pointer_and_keyboard_selection_paths(cx: &mut TestAppContext) {
-		cx.update(|cx| cx.init_colors());
+		cx.update(|cx| {
+			gpui_kit::init(cx);
+			cx.init_colors();
+		});
 		let window = cx.open_window(size(px(240.0), px(200.0)), |window, cx| {
 			let combo = cx.new(|cx| {
 				ComboBox::new(
@@ -2004,25 +2040,25 @@ mod tests {
 		let visual = VisualTestContext::from_window(window.into(), cx).into_mut();
 		let combo = visual.read(|app| probe.read(app).combo.clone());
 		visual.update(|window, cx| {
-			window.draw(cx).clear();
+			window.draw(cx).clear(cx);
 		});
 
 		// Clicking the button opens the popup; the highlight follows the
 		// current selection.
 		visual.simulate_mouse_down(
-			gpui::point(px(20.0), px(12.0)),
+			gpui_kit::point(px(20.0), px(12.0)),
 			MouseButton::Left,
 			Modifiers::none(),
 		);
 		visual.simulate_mouse_up(
-			gpui::point(px(20.0), px(12.0)),
+			gpui_kit::point(px(20.0), px(12.0)),
 			MouseButton::Left,
 			Modifiers::none(),
 		);
 		cx.run_until_parked();
 		assert!(visual.read(|app| combo.read(app).open), "click opened the popup");
 		visual.update(|window, cx| {
-			window.draw(cx).clear();
+			window.draw(cx).clear(cx);
 		});
 
 		// Keyboard while open: Down/Up move the highlight (which wraps),
@@ -2058,17 +2094,17 @@ mod tests {
 		// below the button with 4px of padding and ~22.5px rows).
 		visual.simulate_keystrokes("space");
 		visual.update(|window, cx| {
-			window.draw(cx).clear();
+			window.draw(cx).clear(cx);
 		});
 		let mut clicked = None;
 		for offset in 30..60 {
 			visual.simulate_mouse_down(
-				gpui::point(px(20.0), px(offset as f32)),
+				gpui_kit::point(px(20.0), px(offset as f32)),
 				MouseButton::Left,
 				Modifiers::none(),
 			);
 			visual.simulate_mouse_up(
-				gpui::point(px(20.0), px(offset as f32)),
+				gpui_kit::point(px(20.0), px(offset as f32)),
 				MouseButton::Left,
 				Modifiers::none(),
 			);
@@ -2083,19 +2119,19 @@ mod tests {
 		// A click outside the open popup dismisses it without selecting.
 		let before = visual.read(|app| combo.read(app).selected());
 		visual.simulate_mouse_down(
-			gpui::point(px(20.0), px(12.0)),
+			gpui_kit::point(px(20.0), px(12.0)),
 			MouseButton::Left,
 			Modifiers::none(),
 		);
 		cx.run_until_parked();
 		assert!(visual.read(|app| combo.read(app).open));
 		visual.simulate_mouse_down(
-			gpui::point(px(200.0), px(180.0)),
+			gpui_kit::point(px(200.0), px(180.0)),
 			MouseButton::Left,
 			Modifiers::none(),
 		);
 		visual.simulate_mouse_up(
-			gpui::point(px(200.0), px(180.0)),
+			gpui_kit::point(px(200.0), px(180.0)),
 			MouseButton::Left,
 			Modifiers::none(),
 		);
@@ -2125,9 +2161,12 @@ mod tests {
 		}
 	}
 
-	#[gpui::test]
+	#[gpui_kit::test]
 	async fn spinbox_scroll_keyboard_and_editor_paths(cx: &mut TestAppContext) {
-		cx.update(|cx| cx.init_colors());
+		cx.update(|cx| {
+			gpui_kit::init(cx);
+			cx.init_colors();
+		});
 		let window = cx.open_window(size(px(240.0), px(120.0)), |window, cx| {
 			let spin = cx.new(|cx| {
 				SpinBox::new(
@@ -2147,22 +2186,22 @@ mod tests {
 		cx.run_until_parked();
 		let spin = visual.read(|app| probe.read(app).spin.clone());
 		visual.update(|window, cx| {
-			window.draw(cx).clear();
+			window.draw(cx).clear(cx);
 		});
 
-		let wheel = |visual: &mut VisualTestContext, delta: gpui::ScrollDelta| {
-			visual.simulate_event(gpui::ScrollWheelEvent {
-				position: gpui::point(px(20.0), px(12.0)),
+		let wheel = |visual: &mut VisualTestContext, delta: gpui_kit::ScrollDelta| {
+			visual.simulate_event(gpui_kit::ScrollWheelEvent {
+				position: gpui_kit::point(px(20.0), px(12.0)),
 				delta,
 				modifiers: Modifiers::none(),
-				touch_phase: gpui::TouchPhase::Ended,
+				touch_phase: gpui_kit::TouchPhase::Ended,
 			});
 		};
 
 		// Hover-wheel is inert: the field must be focused first.
 		wheel(
 			visual,
-			gpui::ScrollDelta::Lines(gpui::Point::new(0.0, 1.0)),
+			gpui_kit::ScrollDelta::Lines(gpui_kit::Point::new(0.0, 1.0)),
 		);
 		assert_eq!(visual.read(|app| spin.read(app).value()), SliderValue::Float(184.0));
 
@@ -2170,22 +2209,22 @@ mod tests {
 		visual.update(|window, app| window.focus(&focus, app));
 		wheel(
 			visual,
-			gpui::ScrollDelta::Lines(gpui::Point::new(0.0, 1.0)),
+			gpui_kit::ScrollDelta::Lines(gpui_kit::Point::new(0.0, 1.0)),
 		);
 		assert_eq!(visual.read(|app| spin.read(app).value()), SliderValue::Float(192.0));
 		wheel(
 			visual,
-			gpui::ScrollDelta::Lines(gpui::Point::new(0.0, -1.0)),
+			gpui_kit::ScrollDelta::Lines(gpui_kit::Point::new(0.0, -1.0)),
 		);
 		assert_eq!(visual.read(|app| spin.read(app).value()), SliderValue::Float(184.0));
 		wheel(
 			visual,
-			gpui::ScrollDelta::Pixels(gpui::Point::new(px(0.0), px(-4.0))),
+			gpui_kit::ScrollDelta::Pixels(gpui_kit::Point::new(px(0.0), px(-4.0))),
 		);
 		assert_eq!(visual.read(|app| spin.read(app).value()), SliderValue::Float(176.0));
 		wheel(
 			visual,
-			gpui::ScrollDelta::Pixels(gpui::Point::new(px(0.0), px(4.0))),
+			gpui_kit::ScrollDelta::Pixels(gpui_kit::Point::new(px(0.0), px(4.0))),
 		);
 		assert_eq!(visual.read(|app| spin.read(app).value()), SliderValue::Float(184.0));
 
@@ -2208,19 +2247,19 @@ mod tests {
 		let before_wheel = visual.read(|app| spin.read(app).value());
 		wheel(
 			visual,
-			gpui::ScrollDelta::Lines(gpui::Point::new(0.0, 1.0)),
+			gpui_kit::ScrollDelta::Lines(gpui_kit::Point::new(0.0, 1.0)),
 		);
 		assert_eq!(visual.read(|app| spin.read(app).value()), before_wheel);
 		// The open editor renders under the readout; its text is the seed.
 		visual.update(|window, cx| {
-			window.draw(cx).clear();
+			window.draw(cx).clear(cx);
 		});
 		let editor = visual
 			.read(|app| spin.read(app).edit.clone())
 			.expect("open editor");
-		visual.update(|_window, app| {
-			editor.update(app, |editor, cx| editor.emplace("500", cx));
-		});
+		visual.update(|window, app| {
+			editor.update(app, |editor, cx| editor.set_value("500", window, cx));
+	});
 		visual.simulate_keystrokes("escape");
 		cx.run_until_parked();
 		assert!(visual.read(|app| spin.read(app).edit_cancel));
@@ -2236,19 +2275,19 @@ mod tests {
 		// Refresh the frame so the closed editor's input no longer captures
 		// the next click.
 		visual.update(|window, cx| {
-			window.draw(cx).clear();
+			window.draw(cx).clear(cx);
 		});
 
 		// Double click opens the editor seeded with the current value; a
 		// blur commits the typed replacement (clamped).
-		double_click_at(visual, gpui::point(px(20.0), px(12.0)));
+		double_click_at(visual, gpui_kit::point(px(20.0), px(12.0)));
 		cx.run_until_parked();
 		let editor = visual
 			.read(|app| spin.read(app).edit.clone())
 			.expect("double click opened the editor");
-		visual.update(|_window, app| {
-			editor.update(app, |editor, cx| editor.emplace("9000", cx));
-		});
+		visual.update(|window, app| {
+			editor.update(app, |editor, cx| editor.set_value("9000", window, cx));
+	});
 		visual.update(|window, app| window.focus(&focus, app));
 		cx.run_until_parked();
 		assert_eq!(

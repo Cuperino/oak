@@ -23,7 +23,7 @@
 //! nodes' stable identities, so selection round-trips through
 //! [`find_by_identity`].
 
-use gpui_widgets::project_explorer::ProjectEntry;
+use crate::widgets::project_explorer::ProjectEntry;
 
 use oak_node::folder::FolderBehavior;
 use oak_node::id::NodeId;

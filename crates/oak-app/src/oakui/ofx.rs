@@ -50,7 +50,7 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
-use gpui::{Keystroke, Point, RenderImage, Size};
+use gpui_kit::{Keystroke, Point, RenderImage, Size};
 use oak_ofx_plugin::progress::{ReporterFactory, UiProgressReporter};
 use oak_ofx_plugin::suites::interact::Interact;
 use oak_ofx_plugin::suites::status;
@@ -674,7 +674,7 @@ mod tests {
 	// Interact viewport mapping / key symbols / compositing (pure)
 	// ---------------------------------------------------------------------------
 
-	use gpui::{point, size};
+	use gpui_kit::{point, size};
 
 	/// 视口像素 → pen 坐标：the picture shows the frame with a contain fit,
 	/// so a 2:1 area/frame scale maps local pixels 1:2 to frame pixels, and
@@ -723,7 +723,7 @@ mod tests {
 	#[test]
 	fn key_symbol_maps_common_keys() {
 		use oak_ofx_plugin::host as ofx_key;
-		let ks = |key: &str| gpui::Keystroke::parse(key).unwrap();
+		let ks = |key: &str| gpui_kit::Keystroke::parse(key).unwrap();
 		// Alphanumerics: symbol = ASCII code, string = the char.
 		assert_eq!(key_symbol(&ks("a")), (ofx_key::KEY_A, "a".to_string()));
 		assert_eq!(key_symbol(&ks("z")), (ofx_key::KEY_Z, "z".to_string()));
@@ -866,7 +866,7 @@ mod tests {
 	}
 
 	/// The minimal test plugin's scan directory (the bundle is assembled
-	/// from the dylib the app build script compiles into OUT_DIR), or `None`
+	/// from the dylib the app build script compiles into OUT_DIR) }, or `None`
 	/// when the plugin is unavailable (the test skips).
 	fn test_plugin_scan_dir() -> Option<std::path::PathBuf> {
 		let out = std::path::PathBuf::from(env!("OUT_DIR"));
@@ -1197,7 +1197,7 @@ mod tests {
 	#[test]
 	fn key_symbol_function_keys_and_unknown_multi_char_keys() {
 		use oak_ofx_plugin::host as ofx_key;
-		let ks = |key: &str| gpui::Keystroke::parse(key).unwrap();
+		let ks = |key: &str| gpui_kit::Keystroke::parse(key).unwrap();
 		assert_eq!(
 			key_symbol(&ks("f35")),
 			(ofx_key::KEY_F1 + 34, String::new())

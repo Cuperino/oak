@@ -20,7 +20,7 @@
 //! samples (the pipeline's internal format). Instead of downconverting to
 //! BGRA8 and going through gpui's 8-bit sprite atlas, this module packs the
 //! samples into a half-float RGBA16F texture and hands it to the viewer as a
-//! [`SurfaceSource::Texture`](gpui::SurfaceSource) — the wgpu renderer
+//! [`SurfaceSource::Texture`](gpui_kit::SurfaceSource) — the wgpu renderer
 //! samples it straight into the (10-bit, `Rgb10a2Unorm`) swapchain, so no
 //! 8-bit quantization happens between the render and the panel.
 //!
@@ -120,7 +120,7 @@ fn ensure_display_lut(ctx: &oak_core::backend::GpuContext) {
 /// Register the window's wgpu device/queue for the 10-bit display path
 /// and adopt it into the engine (M2). The engine's render thread then
 /// renders on the very device gpui presents with, so finished frames are
-/// sampled zero-copy via [`gpui::SurfaceSource::Texture`]. The adoption
+/// sampled zero-copy via [`gpui_kit::SurfaceSource::Texture`]. The adoption
 /// is a no-op when the engine already created its own device (then
 /// [`present_gpu_frame`] reports `None` and the caller stages through the
 /// CPU as before).
@@ -265,12 +265,12 @@ pub fn register_texture(
 	height: u32,
 	texture: std::sync::Arc<wgpu::Texture>,
 ) {
-	gpui_widgets::viewer::register_gpu_frame(
+	crate::widgets::viewer::register_gpu_frame(
 		image_id,
 		texture,
-		gpui::Size {
-			width: gpui::DevicePixels::from(width),
-			height: gpui::DevicePixels::from(height),
+		gpui_kit::Size {
+			width: gpui_kit::DevicePixels::from(width),
+			height: gpui_kit::DevicePixels::from(height),
 		},
 	);
 }

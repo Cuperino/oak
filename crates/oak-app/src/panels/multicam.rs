@@ -42,20 +42,21 @@
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 
-use gpui::colors::{Colors, DefaultColors};
-use gpui::dock::{DockPanel, PanelEvent};
-use gpui::{
+use gpui_kit::colors::{Colors, DefaultColors};
+use gpui_kit::component::dock::{BasePanel, Panel, PanelEvent};
+use gpui_kit::Focusable;
+use crate::panels::PanelFocused;
+use gpui_kit::{
 	canvas, div, img, prelude::*, px, AnyElement, App, Bounds, Context, Entity, EventEmitter,
-	FocusHandle, MouseButton, ObjectFit, Pixels, Point, Rgba, Render, SharedString, Window,
+	FocusHandle, MouseButton, ObjectFit, Pixels, Point, Rgba, Render, Window,
 };
-use gpui_widgets::viewer::PlaybackClock;
+use crate::widgets::viewer::PlaybackClock;
 
 use oak_node::nodes::multicamnode::MultiCamNode;
 
 use crate::oakui::timecode::format_timecode;
 use crate::oakui::{AppEngine, MulticamState};
 use crate::panels::commands::PanelCommandHandler;
-use crate::panels::ids::MULTICAM;
 use crate::panels::chip;
 
 /// The number of sources refreshed per tick during playback (the rest keep
@@ -83,6 +84,9 @@ struct QueuedSwitch {
 
 /// The multicam panel.
 pub struct MulticamPanel<E: AppEngine> {
+	/// The panel's focus handle (the dock's zoom/focus and the
+	/// shell's focused-panel routing need it).
+	focus_handle: FocusHandle,
 	engine: Entity<E>,
 	/// The program monitor's clock (playhead + playing state).
 	clock: Entity<E::Clock>,
@@ -94,7 +98,7 @@ pub struct MulticamPanel<E: AppEngine> {
 	state: Option<MulticamState>,
 	/// The last image per source (stale-OK during playback; the engine's
 	/// cache holds the fresh frames).
-	frames: HashMap<i32, Arc<gpui::RenderImage>>,
+	frames: HashMap<i32, Arc<gpui_kit::RenderImage>>,
 	/// Pending switches during playback ([`QueuedSwitch`]).
 	play_queue: VecDeque<QueuedSwitch>,
 	/// Round-robin cursor over the sources (playback refresh throttle).
@@ -125,6 +129,7 @@ impl<E: AppEngine> MulticamPanel<E> {
 		_cx: &mut Context<Self>,
 	) -> Self {
 		Self {
+			focus_handle: _cx.focus_handle(),
 			engine,
 			clock,
 			grid_bounds: Bounds::default(),
@@ -386,9 +391,9 @@ impl<E: AppEngine> Render for MulticamPanel<E> {
 			// dock re-emits this as `DockEvent::PanelFocused`, which the
 			// shell uses to route the focused-panel hotkeys).
 			.on_mouse_down(MouseButton::Left, {
-				cx.listener(|this, _event: &gpui::MouseDownEvent, window, cx| {
+				cx.listener(|this, _event: &gpui_kit::MouseDownEvent, window, cx| {
 					window.focus(&this.focus, cx);
-					cx.emit(PanelEvent::Focused);
+					cx.emit(PanelFocused);
 				})
 			})
 			.child(
@@ -412,7 +417,7 @@ impl<E: AppEngine> Render for MulticamPanel<E> {
 					// The grid click handler converts the window-space click
 					// through the recorded grid origin (see the canvas below).
 					.on_mouse_down(MouseButton::Left, {
-						cx.listener(|this, event: &gpui::MouseDownEvent, _window, cx| {
+						cx.listener(|this, event: &gpui_kit::MouseDownEvent, _window, cx| {
 							this.handle_grid_click(event.position, cx);
 						})
 					})
@@ -462,17 +467,23 @@ impl<E: AppEngine> PanelCommandHandler for MulticamPanel<E> {
 
 impl<E: AppEngine> EventEmitter<PanelEvent> for MulticamPanel<E> {}
 
-impl<E: AppEngine> DockPanel for MulticamPanel<E> {
-	fn panel_id(&self) -> gpui::dock::PanelId {
-		MULTICAM
-	}
+impl<E: AppEngine> EventEmitter<PanelFocused> for MulticamPanel<E> {}
 
-	fn title(&self, _cx: &App) -> SharedString {
-		crate::i18n::tr("panel.multicam").into()
+impl<E: AppEngine> Focusable for MulticamPanel<E> {
+	fn focus_handle(&self, _cx: &App) -> FocusHandle {
+		self.focus_handle.clone()
 	}
+}
 
-	fn tab_content(&self, _cx: &App) -> AnyElement {
-		div().child(crate::i18n::tr("panel.multicam")).into_any_element()
+impl<E: AppEngine> BasePanel for MulticamPanel<E> {
+	fn panel_name(&self) -> &'static str {
+		crate::panels::ids::MULTICAM
+	}
+}
+
+impl<E: AppEngine> Panel for MulticamPanel<E> {
+	fn title(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+		crate::i18n::tr("panel.multicam")
 	}
 }
 
@@ -480,7 +491,7 @@ impl<E: AppEngine> DockPanel for MulticamPanel<E> {
 mod tests {
 	use super::*;
 	use crate::actions::MulticamSwitch5;
-	use gpui::{size, Focusable, TestAppContext, VisualTestContext};
+	use gpui_kit::{size, Focusable, TestAppContext, VisualTestContext};
 	use std::cell::Cell;
 	use std::rc::Rc;
 
@@ -534,9 +545,12 @@ mod tests {
 
 	/// The panel renders the demo grid without crashing and fills the
 	/// angle-frame map from the mock engine's synthetic frames.
-	#[gpui::test]
+	#[gpui_kit::test]
 	async fn panel_renders_the_mock_grid(cx: &mut TestAppContext) {
-		cx.update(|cx| cx.init_colors());
+		cx.update(|cx| {
+			gpui_kit::init(cx);
+			cx.init_colors();
+		});
 		let window = cx.open_window(size(px(640.0), px(360.0)), |window, cx| {
 			let engine = cx.new(crate::oakui::MockEngine::demo);
 			let clock = engine.read(cx).program_clock().clone();
@@ -546,7 +560,7 @@ mod tests {
 		let panel = window.root(cx).expect("multicam panel root");
 		let cx = VisualTestContext::from_window(window.into(), cx).into_mut();
 		cx.update(|window, cx| {
-			window.draw(cx).clear();
+			window.draw(cx).clear(cx);
 		});
 		cx.run_until_parked();
 
@@ -568,18 +582,13 @@ mod tests {
 	struct KeyContextHarness {
 		panel_focus: FocusHandle,
 		switched: Rc<Cell<bool>>,
-		editable: Entity<gpui_elements::editable_text::EditableTextState>,
+		editable: Entity<gpui_kit::base::input::InputState>,
 	}
 
 	impl KeyContextHarness {
 		fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
-			let _ = window;
-			let editable = cx.new(|cx| {
-				gpui_elements::editable_text::EditableTextState::new(
-					gpui_elements::editable_text::StringStorage::from("0"),
-					cx,
-				)
-			});
+			let editable = cx.new(|cx| gpui_kit::base::input::InputState::new(window, cx));
+			editable.update(cx, |editor, cx| editor.set_value("0", window, cx));
 			Self {
 				panel_focus: cx.focus_handle(),
 				switched: Rc::new(Cell::new(false)),
@@ -602,7 +611,7 @@ mod tests {
 						.key_context("MulticamPanel")
 						.track_focus(&self.panel_focus)
 						.w_1_2()
-						.bg(gpui::rgb(0x202020))
+						.bg(gpui_kit::rgb(0x202020))
 						.on_action(
 							move |_: &MulticamSwitch5, _: &mut Window, _: &mut App| {
 								switched.set(true);
@@ -622,11 +631,14 @@ mod tests {
 	/// any value box / hex field / text input dispatched the switch action
 	/// instead of reaching the input handler — every field could only ever
 	/// type `0`.)
-	#[gpui::test]
+	#[gpui_kit::test]
 	async fn digit_keys_type_in_text_fields_but_switch_inside_the_panel(
 		cx: &mut TestAppContext,
 	) {
-		cx.update(|cx| cx.init_colors());
+		cx.update(|cx| {
+			gpui_kit::init(cx);
+			cx.init_colors();
+		});
 		let window = cx.open_window(size(px(640.0), px(360.0)), |window, cx| {
 			cx.bind_keys(crate::actions::key_bindings());
 			KeyContextHarness::new(window, cx)
@@ -636,14 +648,15 @@ mod tests {
 		let cx = VisualTestContext::from_window(window.into(), cx).into_mut();
 
 		// Focus the text field: `5` must type into it — no binding matches
-		// on a focus path that lacks the `MulticamPanel` context. (The
-		// field's caret starts at position 0, so the digit lands at the
-		// front of the initial "0".)
+		// on a focus path that lacks the `MulticamPanel` context. (Home
+		// parks the caret at position 0, so the digit lands at the front of
+		// the initial "0".)
 		let field_focus = cx.read(|app| harness.read(app).editable.focus_handle(app));
 		cx.update(|window, app| window.focus(&field_focus, app));
 		cx.run_until_parked();
+		cx.simulate_keystrokes("home");
 		cx.simulate_keystrokes("5");
-		let text = cx.read(|app| harness.read(app).editable.read(app).as_str().to_string());
+		let text = cx.read(|app| harness.read(app).editable.read(app).value().to_string());
 		assert_eq!(text, "50", "a digit reaches the focused text field");
 
 		// Focus the panel: the same key now dispatches the switch action
@@ -654,7 +667,7 @@ mod tests {
 		cx.simulate_keystrokes("5");
 		let (switched, text) = cx.read(|app| {
 			let harness = harness.read(app);
-			(harness.switched.get(), harness.editable.read(app).as_str().to_string())
+			(harness.switched.get(), harness.editable.read(app).value().to_string())
 		});
 		assert!(
 			switched,

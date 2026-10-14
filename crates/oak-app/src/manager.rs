@@ -31,13 +31,13 @@
 //! `OakApp<MockEngine>` tests in `crate::app`.
 
 use crate::oakui::component::text_input;
-use gpui::colors::DefaultColors;
-use gpui::prelude::*;
-use gpui::{
+use gpui_kit::colors::DefaultColors;
+use gpui_kit::prelude::*;
+use gpui_kit::{
 	div, App, ClickEvent, Context, ElementId, Entity, EventEmitter, Hsla, Render, SharedString,
 	Window,
 };
-use gpui_elements::editable_text::{EditableTextState, StringStorage};
+use gpui_kit::base::input::InputState;
 
 use crate::i18n;
 use crate::oakui::{AppEngine, LibraryProject};
@@ -211,7 +211,7 @@ impl<E: AppEngine> Render for ProjectManager<E> {
 		};
 
 		// The column header.
-		let header_cell = |label: &'static str, width: f32| -> gpui::Div {
+		let header_cell = |label: &'static str, width: f32| -> gpui_kit::Div {
 			let mut cell = div()
 				.px_2()
 				.text_xs()
@@ -221,13 +221,13 @@ impl<E: AppEngine> Render for ProjectManager<E> {
 			if width <= 0.0 {
 				cell = cell.flex_1();
 			} else {
-				cell = cell.w(gpui::px(width)).text_right();
+				cell = cell.w(gpui_kit::px(width)).text_right();
 			}
 			cell
 		};
 
 		let list = div()
-			.h(gpui::px(340.0))
+			.h(gpui_kit::px(340.0))
 			.flex()
 			.flex_col()
 			.border_1()
@@ -392,26 +392,26 @@ impl<E: AppEngine> Render for ProjectManager<E> {
 
 /// The rename prompt's content: one text field with the new name.
 pub struct NamePrompt {
-	editor: Entity<EditableTextState>,
+	editor: Entity<InputState>,
 }
 
 impl NamePrompt {
 	/// Builds the prompt seeded with `initial`.
-	pub fn new(initial: &str, cx: &mut Context<Self>) -> Self {
-		let editor = cx.new(|cx| EditableTextState::new(StringStorage::default(), cx));
-		editor.update(cx, |editor, cx| editor.emplace(initial, cx));
+	pub fn new(initial: &str, window: &mut Window, cx: &mut Context<Self>) -> Self {
+		let editor = cx.new(|cx| InputState::new(window, cx));
+		editor.update(cx, |editor, cx| editor.set_value(initial, window, cx));
 		Self { editor }
 	}
 
 	/// The name currently entered (trimmed).
 	pub fn value(&self, app: &App) -> String {
-		self.editor.read(app).as_str().trim().to_string()
+		self.editor.read(app).value().trim().to_string()
 	}
 
 	/// Replaces the entered name (tests / prefill).
-	pub fn set_value(&mut self, value: &str, cx: &mut Context<Self>) {
+	pub fn set_value(&mut self, value: &str, window: &mut Window, cx: &mut Context<Self>) {
 		self.editor
-			.update(cx, |editor, cx| editor.emplace(value, cx));
+			.update(cx, |editor, cx| editor.set_value(value, window, cx));
 		cx.notify();
 	}
 }

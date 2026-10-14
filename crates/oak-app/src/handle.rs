@@ -63,7 +63,7 @@ macro_rules! define_handle {
 			}
 
 			unsafe fn add_ref(ptr: *const std::ffi::c_void) {
-				extern "C" {
+				unsafe extern "C" {
 					#[link_name = concat!($prefix, "_add_ref")]
 					fn raw_add_ref(handle: *const std::ffi::c_void);
 				}
@@ -72,7 +72,7 @@ macro_rules! define_handle {
 			}
 
 			unsafe fn release(ptr: *const std::ffi::c_void) {
-				extern "C" {
+				unsafe extern "C" {
 					#[link_name = concat!($prefix, "_release")]
 					fn raw_release(handle: *const std::ffi::c_void);
 				}
@@ -113,7 +113,7 @@ mod tests {
 		}
 	}
 
-	#[no_mangle]
+	#[unsafe(no_mangle)]
 	pub extern "C" fn oak_testflag_add_ref(handle: *const c_void) {
 		if handle.is_null() {
 			return;
@@ -121,7 +121,7 @@ mod tests {
 		unsafe { Arc::increment_strong_count(handle.cast::<DropFlag>()) };
 	}
 
-	#[no_mangle]
+	#[unsafe(no_mangle)]
 	pub extern "C" fn oak_testflag_release(handle: *const c_void) {
 		if handle.is_null() {
 			return;

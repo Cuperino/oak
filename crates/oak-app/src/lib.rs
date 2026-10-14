@@ -14,12 +14,13 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-//! `oakapp` — the Rust application layer of Oak, built on the `gpui` UI
-//! framework (the oak-gpui fork at `gpui/`).
+//! `oakapp` — the Rust application layer of Oak, built on gpui-kit
+//! (the registry `gpui-pre` + `gpui-base` + `gpui-component`; the custom
+//! widgets live in `oak-widgets`, folding into `crate::widgets`).
 //!
 //! This is the start of the Rust rewrite of `app/` (Qt): a gpui window with
 //! the main layout from the design (`design/`), dockable panels built from
-//! the `gpui_widgets` library, and an engine seam (`oakui`) with two
+//! the `oak_widgets` library, and an engine seam (`oakui`) with two
 //! backends: the mock ([`oakui::MockEngine`]) feeding demo data, and the
 //! real engine ([`oakui::RealEngine`]) driving the oak* module crates
 //! directly (M14 R3: project open/save through the oaknode serializer,
@@ -65,6 +66,7 @@ pub mod manager;
 pub mod oakui;
 pub mod panels;
 pub mod update;
+pub mod widgets;
 mod handle;
 
 /// The application entry point (called from `main.rs`).

@@ -20,15 +20,17 @@
 //! between the picture and the scopes (histogram / waveform / vectorscope),
 //! whose samples come from the same rendered frame the picture shows.
 
-use gpui::colors::DefaultColors;
-use gpui::dock::{DockPanel, PanelEvent};
-use gpui::{
+use gpui_kit::colors::DefaultColors;
+use gpui_kit::component::dock::{BasePanel, Panel, PanelEvent};
+use gpui_kit::{FocusHandle, Focusable};
+use crate::panels::PanelFocused;
+use gpui_kit::{
 	div, prelude::*, px, size, AnyElement, App, ClickEvent, Context, Entity, EventEmitter,
-	MouseButton, Point, Render, SharedString, Window,
+	MouseButton, Point, Render, Window,
 };
-use gpui_widgets::audio_meter::AudioLevelMeter;
-use gpui_widgets::scopes::{ChromaDataSource, Histogram, LumaDataSource, Vectorscope, Waveform};
-use gpui_widgets::viewer::{
+use crate::widgets::audio_meter::AudioLevelMeter;
+use crate::widgets::scopes::{ChromaDataSource, Histogram, LumaDataSource, Vectorscope, Waveform};
+use crate::widgets::viewer::{
 	InteractPointerKind, PlaybackClock, SafeMargins, ViewerEvent, ViewerWidget, ViewerZoom,
 	WaveformMode,
 };
@@ -40,7 +42,6 @@ use crate::oakui::ofx::InteractViewport;
 use crate::oakui::timecode::{format_fps, format_resolution};
 use crate::oakui::{AppEngine, Monitor};
 use crate::panels::commands::{self as panel_commands, PanelCommandHandler};
-use crate::panels::ids::PROGRAM_VIEWER;
 use crate::panels::{chip, viewer_title};
 
 /// Width of the audio level strip, per the design (26px).
@@ -82,7 +83,7 @@ impl ChromaDataSource for ScopeState {
 /// plugin requested a repaint).
 struct OverlayComposite {
 	/// The base frame the composite was built from (Arc identity compare).
-	frame: std::sync::Arc<gpui::RenderImage>,
+	frame: std::sync::Arc<gpui_kit::RenderImage>,
 	/// The plugin instance the overlay came from.
 	instance: u64,
 	/// The viewport the overlay was drawn at.
@@ -90,11 +91,14 @@ struct OverlayComposite {
 	/// The playhead seconds used for the draw.
 	time: f64,
 	/// The composited image shown in the viewer.
-	image: std::sync::Arc<gpui::RenderImage>,
+	image: std::sync::Arc<gpui_kit::RenderImage>,
 }
 
 /// The program viewer panel.
 pub struct ProgramViewerPanel<E: AppEngine> {
+	/// The panel's focus handle (the dock's zoom/focus and the
+	/// shell's focused-panel routing need it).
+	focus_handle: FocusHandle,
 	viewer: Entity<ViewerWidget<E::Clock>>,
 	meter: Entity<AudioLevelMeter<E>>,
 	engine: Entity<E>,
@@ -103,10 +107,10 @@ pub struct ProgramViewerPanel<E: AppEngine> {
 	clock: Entity<E::Clock>,
 	/// The last CPU frame handed to the viewer (compared by `Arc` identity so
 	/// a paused playhead does not re-upload the picture every frame).
-	last_cpu_frame: Option<std::sync::Arc<gpui::RenderImage>>,
+	last_cpu_frame: Option<std::sync::Arc<gpui_kit::RenderImage>>,
 	/// The last base frame the scope samples were analyzed from (the scopes
 	/// follow the raw frame, not the overlay composite).
-	scope_frame: Option<std::sync::Arc<gpui::RenderImage>>,
+	scope_frame: Option<std::sync::Arc<gpui_kit::RenderImage>>,
 	/// The cached overlay composite (active OFX interact only); `None` when
 	/// the viewer shows the raw engine frame.
 	overlay: Option<OverlayComposite>,
@@ -194,7 +198,7 @@ impl<E: AppEngine> ProgramViewerPanel<E> {
 		// coupling to the shell.
 		let this = cx.weak_entity();
 		window
-			.spawn(cx, async move |cx: &mut gpui::AsyncWindowContext| loop {
+			.spawn(cx, async move |cx: &mut gpui_kit::AsyncWindowContext| loop {
 				cx.background_executor()
 					.timer(std::time::Duration::from_millis(50))
 					.await;
@@ -219,6 +223,7 @@ impl<E: AppEngine> ProgramViewerPanel<E> {
 		let vectorscope = cx.new(|cx| Vectorscope::new(43, scope_state.clone(), window, cx));
 
 		Self {
+			focus_handle: cx.focus_handle(),
 			viewer,
 			meter,
 			engine,
@@ -413,9 +418,9 @@ impl<E: AppEngine> ProgramViewerPanel<E> {
 	/// when any redraw condition changed.
 	fn displayed_frame(
 		&mut self,
-		frame: &std::sync::Arc<gpui::RenderImage>,
+		frame: &std::sync::Arc<gpui_kit::RenderImage>,
 		cx: &mut Context<Self>,
-	) -> std::sync::Arc<gpui::RenderImage> {
+	) -> std::sync::Arc<gpui_kit::RenderImage> {
 		use std::sync::atomic::Ordering;
 
 		let Some((instance, interact, _)) = crate::oakui::ofx::active_interact() else {
@@ -467,7 +472,7 @@ impl<E: AppEngine> ProgramViewerPanel<E> {
 	/// `time`).
 	fn playhead_seconds(&self, cx: &App) -> f64 {
 		let clock = self.clock.read(cx);
-		gpui::timeline::frame_to_seconds(clock.current_frame(), clock.frame_rate())
+		crate::widgets::timeline::frame_to_seconds(clock.current_frame(), clock.frame_rate())
 	}
 
 	/// Forwards a picture pointer event to the active OFX interact, mapping
@@ -528,7 +533,7 @@ impl<E: AppEngine> ProgramViewerPanel<E> {
 	fn forward_interact_key(
 		&mut self,
 		down: bool,
-		keystroke: &gpui::Keystroke,
+		keystroke: &gpui_kit::Keystroke,
 		cx: &mut Context<Self>,
 	) {
 		let Some((_, interact, _)) = crate::oakui::ofx::active_interact() else {
@@ -549,7 +554,7 @@ impl<E: AppEngine> ProgramViewerPanel<E> {
 		id: &'static str,
 		label: &'static str,
 		tab: ProgramViewTab,
-		colors: &gpui::colors::Colors,
+		colors: &gpui_kit::colors::Colors,
 		cx: &mut Context<Self>,
 	) -> impl IntoElement {
 		let active = self.tab == tab;
@@ -661,14 +666,14 @@ impl<E: AppEngine> Render for ProgramViewerPanel<E> {
 			// dock re-emits this as `DockEvent::PanelFocused`, which the
 			// shell uses to route focused-panel commands).
 			.on_mouse_down(MouseButton::Left, {
-				cx.listener(|_this, _event: &gpui::MouseDownEvent, _window, cx| {
-					cx.emit(PanelEvent::Focused);
+				cx.listener(|_this, _event: &gpui_kit::MouseDownEvent, _window, cx| {
+					cx.emit(PanelFocused);
 				})
 			})
 			// The viewer widget has no right-click handling of its own, so
 			// the panel opens the shared viewer menu here.
 			.on_mouse_down(MouseButton::Right, {
-				cx.listener(|this, event: &gpui::MouseDownEvent, _window, cx| {
+				cx.listener(|this, event: &gpui_kit::MouseDownEvent, _window, cx| {
 					let state = menu::ViewerMenuState {
 						playback_divider: this.engine.read(cx).playback_divider(),
 						zoom: this.viewer.read(cx).zoom(),
@@ -761,31 +766,29 @@ impl<E: AppEngine> EventEmitter<menu::ViewerPanelEvent> for ProgramViewerPanel<E
 
 impl<E: AppEngine> EventEmitter<ContextMenuTriggered> for ProgramViewerPanel<E> {}
 
-impl<E: AppEngine> DockPanel for ProgramViewerPanel<E> {
-	fn panel_id(&self) -> gpui::dock::PanelId {
-		PROGRAM_VIEWER
-	}
+impl<E: AppEngine> EventEmitter<PanelFocused> for ProgramViewerPanel<E> {}
 
-	fn title(&self, cx: &App) -> SharedString {
+impl<E: AppEngine> Focusable for ProgramViewerPanel<E> {
+	fn focus_handle(&self, _cx: &App) -> FocusHandle {
+		self.focus_handle.clone()
+	}
+}
+
+impl<E: AppEngine> BasePanel for ProgramViewerPanel<E> {
+	fn panel_name(&self) -> &'static str {
+		crate::panels::ids::PROGRAM_VIEWER
+	}
+}
+
+impl<E: AppEngine> Panel for ProgramViewerPanel<E> {
+	fn title(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
 		let name = self
 			.engine
 			.read(cx)
 			.current_sequence()
 			.map(|sequence| sequence.name.clone())
 			.unwrap_or_default();
-		viewer_title("panel.program_viewer", &name).into()
-	}
-
-	fn tab_content(&self, cx: &App) -> AnyElement {
-		let name = self
-			.engine
-			.read(cx)
-			.current_sequence()
-			.map(|sequence| sequence.name.clone())
-			.unwrap_or_default();
-		div()
-			.child(viewer_title("panel.program_viewer", &name))
-			.into_any_element()
+		viewer_title("panel.program_viewer", &name)
 	}
 }
 
@@ -795,9 +798,9 @@ mod tests {
 	use crate::oakui::component::menu::ViewerMenuAction;
 	use crate::oakui::graphops;
 	use crate::oakui::MockEngine;
-	use gpui::timeline::Frame;
-	use gpui::{size, Keystroke, Modifiers, Rgba, TestAppContext, VisualTestContext};
-	use gpui_widgets::viewer::PlaybackClock;
+	use crate::widgets::timeline::Frame;
+	use gpui_kit::{size, Keystroke, Modifiers, Rgba, TestAppContext, VisualTestContext};
+	use crate::widgets::viewer::PlaybackClock;
 
 	/// Serializes the tests that mutate process-global state (HOME, the
 	/// debug env var) and the undo stack.
@@ -813,7 +816,7 @@ mod tests {
 	impl HomeGuard {
 		fn redirect(path: &std::path::Path) -> HomeGuard {
 			let previous = std::env::var_os("HOME");
-			std::env::set_var("HOME", path);
+			unsafe { std::env::set_var("HOME", path) };
 			HomeGuard(previous)
 		}
 	}
@@ -821,8 +824,8 @@ mod tests {
 	impl Drop for HomeGuard {
 		fn drop(&mut self) {
 			match self.0.take() {
-				Some(value) => std::env::set_var("HOME", value),
-				None => std::env::remove_var("HOME"),
+				Some(value) => unsafe { std::env::set_var("HOME", value) },
+				None => unsafe { std::env::remove_var("HOME") },
 			}
 		}
 	}
@@ -835,7 +838,10 @@ mod tests {
 		&'static mut VisualTestContext,
 		Entity<ProgramViewerPanel<MockEngine>>,
 	) {
-		cx.update(|cx| cx.init_colors());
+		cx.update(|cx| {
+			gpui_kit::init(cx);
+			cx.init_colors();
+		});
 		let window = cx.open_window(size(px(640.0), px(360.0)), |window, cx| {
 			let engine = cx.new(MockEngine::demo);
 			let clock = engine.read(cx).program_clock().clone();
@@ -852,11 +858,11 @@ mod tests {
 	/// interact forwarders (no-op without an interact), the overlay toggles,
 	/// the workarea re-emissions, the eyedropper mailbox and the transport
 	/// requests against the program monitor's clock.
-	#[gpui::test]
+	#[gpui_kit::test]
 	async fn viewer_events_route_through_the_panel(cx: &mut TestAppContext) {
 		let (cx, panel) = panel_window(cx);
 		cx.update(|window, cx| {
-			window.draw(cx).clear();
+			window.draw(cx).clear(cx);
 		});
 		let viewer = cx.update(|_, cx| panel.read(cx).viewer.clone());
 		let engine = cx.update(|_, cx| panel.read(cx).engine.clone());
@@ -932,7 +938,7 @@ mod tests {
 
 	/// The context-menu resolver and every viewer menu action, including the
 	/// Save Frame arm (which writes through the engine's capture path).
-	#[gpui::test]
+	#[gpui_kit::test]
 	async fn menu_actions_apply_to_viewer_and_engine(cx: &mut TestAppContext) {
 		let (cx, panel) = panel_window(cx);
 		let engine = cx.update(|_, cx| panel.read(cx).engine.clone());
@@ -1023,19 +1029,19 @@ mod tests {
 
 	/// The panel's own mouse handlers: a left click focuses the panel, a
 	/// right click builds the viewer menu state and opens the popup.
-	#[gpui::test]
+	#[gpui_kit::test]
 	async fn mouse_downs_focus_and_open_the_context_menu(cx: &mut TestAppContext) {
 		let (cx, _panel) = panel_window(cx);
 		cx.update(|window, cx| {
-			window.draw(cx).clear();
+			window.draw(cx).clear(cx);
 		});
-		let center = gpui::point(px(320.0), px(180.0));
+		let center = gpui_kit::point(px(320.0), px(180.0));
 		cx.simulate_mouse_down(center, MouseButton::Left, Modifiers::none());
 		cx.run_until_parked();
 		cx.simulate_mouse_down(center, MouseButton::Right, Modifiers::none());
 		cx.run_until_parked();
 		cx.update(|window, cx| {
-			window.draw(cx).clear();
+			window.draw(cx).clear(cx);
 		});
 		assert!(
 			cx.debug_bounds("menu-popup").is_some(),
@@ -1045,11 +1051,11 @@ mod tests {
 
 	/// Every focused-panel transport hook, the tab button click and the
 	/// dock tab content.
-	#[gpui::test]
+	#[gpui_kit::test]
 	async fn transport_hooks_and_dock_content(cx: &mut TestAppContext) {
 		let (cx, panel) = panel_window(cx);
 		cx.update(|window, cx| {
-			window.draw(cx).clear();
+			window.draw(cx).clear(cx);
 		});
 		cx.update(|_, cx| {
 			panel.update(cx, |panel, cx| {
@@ -1066,9 +1072,8 @@ mod tests {
 				assert!(panel.shuttle_right(cx));
 			});
 		});
-		let _ = cx.update(|_, cx| panel.read(cx).tab_content(cx));
 		assert_eq!(
-			cx.update(|_, cx| panel.read(cx).panel_id()),
+			cx.update(|_, cx| panel.read(cx).panel_name()),
 			crate::panels::ids::PROGRAM_VIEWER
 		);
 
@@ -1078,7 +1083,7 @@ mod tests {
 		for step in 0..320 {
 			let x = 639.0 - f64::from(step) * 2.0;
 			cx.simulate_click(
-				gpui::point(px(x as f32), px(14.0)),
+				gpui_kit::point(px(x as f32), px(14.0)),
 				Modifiers::none(),
 			);
 			cx.run_until_parked();
@@ -1092,21 +1097,21 @@ mod tests {
 
 	/// The frame-sync debug dump, the interact forwarders without an active
 	/// interact, the playhead helper and the idle pump timer.
-	#[gpui::test]
+	#[gpui_kit::test]
 	async fn sync_frame_debug_and_interact_noops(cx: &mut TestAppContext) {
 		let _lock = stack_lock();
 		let (cx, panel) = panel_window(cx);
 
 		let prev_debug = std::env::var_os("OAK_DEBUG_VIEWER");
-		std::env::set_var("OAK_DEBUG_VIEWER", "1");
+		unsafe { std::env::set_var("OAK_DEBUG_VIEWER", "1") };
 		cx.update(|window, cx| {
-			window.draw(cx).clear();
+			window.draw(cx).clear(cx);
 		});
 		cx.run_until_parked();
 		std::fs::remove_file("/tmp/oak_viewer_frame.ppm").ok();
 		match prev_debug {
-			Some(value) => std::env::set_var("OAK_DEBUG_VIEWER", value),
-			None => std::env::remove_var("OAK_DEBUG_VIEWER"),
+			Some(value) => unsafe { std::env::set_var("OAK_DEBUG_VIEWER", value) },
+			None => unsafe { std::env::remove_var("OAK_DEBUG_VIEWER") },
 		}
 
 		// The forwarders bail out before touching the picture when no OFX
@@ -1140,9 +1145,12 @@ mod tests {
 
 	/// The scopes tab renders from the mock engine's synthetic frame without
 	/// crashing, and the scope state carries that frame's samples.
-	#[gpui::test]
+	#[gpui_kit::test]
 	async fn scopes_tab_renders_from_the_current_frame(cx: &mut TestAppContext) {
-		cx.update(|cx| cx.init_colors());
+		cx.update(|cx| {
+			gpui_kit::init(cx);
+			cx.init_colors();
+		});
 		let window = cx.open_window(size(px(640.0), px(360.0)), |window, cx| {
 			let engine = cx.new(MockEngine::demo);
 			let clock = engine.read(cx).program_clock().clone();
@@ -1156,7 +1164,7 @@ mod tests {
 		// Draw the picture tab once (fills the scope state from frame 0),
 		// then switch to the scopes tab and draw it.
 		cx.update(|window, cx| {
-			window.draw(cx).clear();
+			window.draw(cx).clear(cx);
 			panel.update(cx, |panel, cx| {
 				panel.tab = ProgramViewTab::Scopes;
 				cx.notify();
@@ -1164,7 +1172,7 @@ mod tests {
 		});
 		cx.run_until_parked();
 		cx.update(|window, cx| {
-			window.draw(cx).clear();
+			window.draw(cx).clear(cx);
 		});
 
 		let (luma_len, chroma_len, bins, envelope) = cx.read(|app| {

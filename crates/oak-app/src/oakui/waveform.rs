@@ -29,10 +29,10 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use gpui::timeline::clip::ClipDecorator;
-use gpui::timeline::ClipId;
-use gpui::timeline::FrameRange;
-use gpui::{Bounds, Hsla, Pixels, Window};
+use crate::widgets::timeline::clip::ClipDecorator;
+use crate::widgets::timeline::ClipId;
+use crate::widgets::timeline::FrameRange;
+use gpui_kit::{Bounds, Hsla, Pixels, Window};
 
 /// One min/max amplitude pair (mirror of the oakaudio waveform C ABI
 /// `MinMax`: two f32s).
@@ -234,10 +234,10 @@ impl ClipDecorator for OakClipDecorator {
 			let y_top = mid - p.max.max(0.0) * half;
 			let y_bot = mid - p.min.min(0.0) * half;
 			let x_px = bounds.origin.x.as_f32() + x as f32;
-			window.paint_quad(gpui::fill(
-				gpui::Bounds::from_corners(
-					gpui::point(Pixels::from(x_px), Pixels::from(y_top)),
-					gpui::point(Pixels::from(x_px + 1.0), Pixels::from(y_bot.max(y_top))),
+			window.paint_quad(gpui_kit::fill(
+				gpui_kit::Bounds::from_corners(
+					gpui_kit::point(Pixels::from(x_px), Pixels::from(y_top)),
+					gpui_kit::point(Pixels::from(x_px + 1.0), Pixels::from(y_bot.max(y_top))),
 				),
 				color,
 			));
@@ -248,8 +248,8 @@ impl ClipDecorator for OakClipDecorator {
 #[cfg(test)]
 mod tests {
 	use super::*;
-	use gpui::timeline::Frame;
-	use gpui::{TestAppContext, VisualTestContext};
+	use crate::widgets::timeline::Frame;
+	use gpui_kit::{TestAppContext, VisualTestContext};
 
 	/// Media tests share the codec/undo test lock (FFmpeg is not safe
 	/// against concurrent decode sessions).
@@ -320,13 +320,13 @@ mod tests {
 	}
 
 	struct Probe;
-	impl gpui::Render for Probe {
+	impl gpui_kit::Render for Probe {
 		fn render(
 			&mut self,
-			_window: &mut gpui::Window,
-			_cx: &mut gpui::Context<Self>,
-		) -> impl gpui::IntoElement {
-			gpui::div()
+			_window: &mut gpui_kit::Window,
+			_cx: &mut gpui_kit::Context<Self>,
+		) -> impl gpui_kit::IntoElement {
+			gpui_kit::div()
 		}
 	}
 
@@ -334,7 +334,7 @@ mod tests {
 	/// and zero-width bounds both return before touching the window (the
 	/// drawing loop itself only runs inside a real paint pass, which the
 	/// widget-level tests cover).
-	#[gpui::test]
+	#[gpui_kit::test]
 	async fn decorator_skips_missing_entries_and_empty_bounds(cx: &mut TestAppContext) {
 		let _lock = media_lock();
 		let media = test_media("paint", true);
@@ -349,7 +349,7 @@ mod tests {
 		assert_eq!(cache.version(), version);
 
 		let window = cx.open_window(
-			gpui::size(gpui::px(200.0), gpui::px(100.0)),
+			gpui_kit::size(gpui_kit::px(200.0), gpui_kit::px(100.0)),
 			|_, _| Probe,
 		);
 		cx.run_until_parked();
@@ -359,8 +359,8 @@ mod tests {
 				cache: cache.clone(),
 			};
 			let bounds = Bounds {
-				origin: gpui::point(gpui::px(0.0), gpui::px(0.0)),
-				size: gpui::size(gpui::px(100.0), gpui::px(40.0)),
+				origin: gpui_kit::point(gpui_kit::px(0.0), gpui_kit::px(0.0)),
+				size: gpui_kit::size(gpui_kit::px(100.0), gpui_kit::px(40.0)),
 			};
 			let range = FrameRange {
 				start: Frame(0),
@@ -369,7 +369,7 @@ mod tests {
 			decorator.paint_waveform(window, ClipId(99), range, bounds);
 			let empty = Bounds {
 				origin: bounds.origin,
-				size: gpui::size(gpui::px(0.0), gpui::px(40.0)),
+				size: gpui_kit::size(gpui_kit::px(0.0), gpui_kit::px(40.0)),
 			};
 			decorator.paint_waveform(window, ClipId(1), range, empty);
 		});

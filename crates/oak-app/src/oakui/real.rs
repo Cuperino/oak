@@ -65,18 +65,18 @@ use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
-use gpui::effect_stack::{
+use crate::widgets::effect_stack::{
 	EffectCardKind, EffectData, EffectId, EffectStackDataSource, EffectStackEvent,
 };
-use gpui::node_graph::{NodeGraphDataSource, NodeGraphEvent};
-use gpui::timeline::{
+use crate::widgets::node_graph::{NodeGraphDataSource, NodeGraphEvent};
+use crate::widgets::timeline::{
 	ClipData, ClipId, Frame, FrameRange, FrameRate, Marker, TimelineDataSource, TimelineEvent,
 	TrackData, TrackHeaderEvent, TrackKind, TrimEdge,
 };
-use gpui::{prelude::*, px, App, Context, Entity, Hsla, Pixels, RenderImage, SharedString};
-use gpui_widgets::audio_meter::AudioMeterDataSource;
-use gpui_widgets::project_explorer::{ProjectDataSource, ProjectEntry};
-use gpui_widgets::viewer::PlaybackClock;
+use gpui_kit::{prelude::*, px, App, Context, Entity, Hsla, Pixels, RenderImage, SharedString};
+use crate::widgets::audio_meter::AudioMeterDataSource;
+use crate::widgets::project_explorer::{ProjectDataSource, ProjectEntry};
+use crate::widgets::viewer::PlaybackClock;
 
 use oak_node::id::NodeId;
 use oak_node::track::TrackType;
@@ -2531,8 +2531,8 @@ impl RealEngine {
 	/// The bin entry's proxy badge (角标): the footage's proxy lifecycle
 	/// mapped onto the widget's badge enum; folders and footage without
 	/// proxy state get none.
-	fn proxy_badge_of(&self, id: u64) -> Option<gpui_widgets::project_explorer::ProxyBadge> {
-		use gpui_widgets::project_explorer::ProxyBadge;
+	fn proxy_badge_of(&self, id: u64) -> Option<crate::widgets::project_explorer::ProxyBadge> {
+		use crate::widgets::project_explorer::ProxyBadge;
 		let project = self.project.as_ref()?;
 		let node = graphops::id_of(id)?;
 		let guard = graphops::lock(project);
@@ -4181,7 +4181,7 @@ impl NodeGraphDataSource for RealEngine {
 		}
 	}
 
-	fn can_connect(&self, from: gpui::node_graph::PortId, to: gpui::node_graph::PortId) -> bool {
+	fn can_connect(&self, from: crate::widgets::node_graph::PortId, to: crate::widgets::node_graph::PortId) -> bool {
 		let Some(project) = self.project_ref() else {
 			return false;
 		};
@@ -4266,13 +4266,10 @@ impl AppEngine for RealEngine {
 		// A display-color transform change (mode / ICC / content space)
 		// invalidates every cached image: they were produced with the old
 		// transform.
-		let gen = super::displaycolor::generation();
-		if gen != self.display_color_gen.get() {
-			self.display_color_gen.set(gen);
+		let generation = super::displaycolor::generation();
+		if generation != self.display_color_gen.get() {
+			self.display_color_gen.set(generation);
 			cache.clear();
-			// The GPU textures hold the display-transformed pixels too — drop
-			// them with the CPU cache so the next frame re-uploads.
-			gpui_widgets::viewer::clear_gpu_frames();
 		}
 		// The full-resolution fill replaces the proxy when its frame matches
 		// the playhead; otherwise the proxy frame is displayed (cached
@@ -4461,15 +4458,15 @@ impl AppEngine for RealEngine {
 
 	/// The open project graph's virtual endpoint pair, if any: the node
 	/// editor must not let the user delete, copy or rename them.
-	fn protected_graph_nodes(&self) -> Vec<gpui::node_graph::NodeId> {
+	fn protected_graph_nodes(&self) -> Vec<crate::widgets::node_graph::NodeId> {
 		let Some(project) = self.project.clone() else {
 			return Vec::new();
 		};
 		let guard = graphops::lock(&project);
 		match guard.graph.endpoints() {
 			Some((input, output)) => vec![
-				gpui::node_graph::NodeId(input.identity()),
-				gpui::node_graph::NodeId(output.identity()),
+				crate::widgets::node_graph::NodeId(input.identity()),
+				crate::widgets::node_graph::NodeId(output.identity()),
 			],
 			None => Vec::new(),
 		}
@@ -8054,7 +8051,7 @@ mod tests {
 		fn set() -> Self {
 			let prev = std::env::var("OAK_WORKER_BIN").ok();
 			match crate::oakui::renderops::test_worker_bin() {
-				Some(path) => std::env::set_var("OAK_WORKER_BIN", path),
+				Some(path) => unsafe { std::env::set_var("OAK_WORKER_BIN", path) },
 				None => eprintln!(
 					"oak-worker binary not found (test-executable sibling, target/{{debug,release}} or OAK_WORKER_BIN); build it with `cargo build -p oak-worker` or set OAK_WORKER_BIN"
 				),
@@ -8065,8 +8062,8 @@ mod tests {
 	impl Drop for WorkerBinGuard {
 		fn drop(&mut self) {
 			match &self.prev {
-				Some(p) => std::env::set_var("OAK_WORKER_BIN", p),
-				None => std::env::remove_var("OAK_WORKER_BIN"),
+				Some(p) => unsafe { std::env::set_var("OAK_WORKER_BIN", p) },
+				None => unsafe { std::env::remove_var("OAK_WORKER_BIN") },
 			}
 		}
 	}
@@ -8114,15 +8111,15 @@ mod tests {
 		impl Drop for Restore {
 			fn drop(&mut self) {
 				match &self.0 {
-					Some(p) => std::env::set_var("OAK_STRICT_PLAYBACK", p),
-					None => std::env::remove_var("OAK_STRICT_PLAYBACK"),
+					Some(p) => unsafe { std::env::set_var("OAK_STRICT_PLAYBACK", p) },
+					None => unsafe { std::env::remove_var("OAK_STRICT_PLAYBACK") },
 				}
 			}
 		}
 		let _restore = Restore(std::env::var("OAK_STRICT_PLAYBACK").ok());
 
 		// Unset: the bounded environmental skip returns `true`.
-		std::env::remove_var("OAK_STRICT_PLAYBACK");
+		unsafe { std::env::remove_var("OAK_STRICT_PLAYBACK") };
 		assert!(!strict_playback());
 		assert!(
 			playback_starved("unit probe: strict-mode gate"),
@@ -8130,7 +8127,7 @@ mod tests {
 		);
 
 		// `=1`: the same path panics instead of returning.
-		std::env::set_var("OAK_STRICT_PLAYBACK", "1");
+		unsafe { std::env::set_var("OAK_STRICT_PLAYBACK", "1") };
 		assert!(strict_playback());
 		let _ = playback_starved("unit probe: strict-mode gate");
 	}
@@ -8578,9 +8575,9 @@ mod tests {
 	/// calls, and the project browser's `roots()` lists the entry under the
 	/// root folder. Selecting the entry (the double-click path) resolves back
 	/// to the footage node.
-	#[gpui::test]
+	#[gpui_kit::test]
 	async fn real_engine_import_footage_lists_in_the_project_browser(
-		cx: &mut gpui::TestAppContext,
+		cx: &mut gpui_kit::TestAppContext,
 	) {
 		let _media = media_lock();
 		let engine = cx.update(|cx| cx.new(RealEngine::create));
@@ -8621,8 +8618,8 @@ mod tests {
 	/// enumeration must return the imported entry (an A/V file appearing in
 	/// the wizard as one angle), no deadlock. This mirrors what the wizard
 	/// modal runs on open ("click 窗口→多机位向导 freezes" regression).
-	#[gpui::test]
-	async fn real_engine_wizard_footage_lists_imported_media(cx: &mut gpui::TestAppContext) {
+	#[gpui_kit::test]
+	async fn real_engine_wizard_footage_lists_imported_media(cx: &mut gpui_kit::TestAppContext) {
 		let _media = media_lock();
 		let engine = cx.update(|cx| cx.new(RealEngine::create));
 		cx.update(|app| engine.update(app, |engine, cx| engine.new_project(cx)));
@@ -8657,8 +8654,8 @@ mod tests {
 	/// carries a `thumbnail` path that resolves to an existing file (the
 	/// engine half of the icon-view img chain; the widget half is covered by
 	/// `icon_view_renders_thumbnail_img_or_placeholder`).
-	#[gpui::test]
-	async fn real_engine_thumbnail_pipeline_produces_png(cx: &mut gpui::TestAppContext) {
+	#[gpui_kit::test]
+	async fn real_engine_thumbnail_pipeline_produces_png(cx: &mut gpui_kit::TestAppContext) {
 		let _media = media_lock();
 		let _worker = WorkerBinGuard::set();
 		if !crate::oakui::renderops::ensure_render_manager() {
@@ -8737,9 +8734,9 @@ mod tests {
 	/// event lands as ONE undoable engine command, the timeline snapshot
 	/// reflects the new flag, and undo restores it. Visibility maps onto the
 	/// track's muted flag (Olive parity).
-	#[gpui::test]
-	async fn real_engine_track_toggles_are_undoable(cx: &mut gpui::TestAppContext) {
-		use gpui::timeline::TrackHeaderEvent;
+	#[gpui_kit::test]
+	async fn real_engine_track_toggles_are_undoable(cx: &mut gpui_kit::TestAppContext) {
+		use crate::widgets::timeline::TrackHeaderEvent;
 		let _media = media_lock();
 		let engine = cx.update(|cx| cx.new(RealEngine::create));
 		cx.update(|app| engine.update(app, |engine, cx| engine.new_project(cx)));
@@ -8750,7 +8747,7 @@ mod tests {
 		assert!(cx.read(|app| engine.read(app).track(0).expect("V1").is_visible()));
 		assert!(!cx.read(|app| engine.read(app).track(1).expect("A1").is_muted()));
 
-		let toggle = |cx: &mut gpui::TestAppContext, track: usize, t: TrackHeaderEvent| {
+		let toggle = |cx: &mut gpui_kit::TestAppContext, track: usize, t: TrackHeaderEvent| {
 			cx.update(|app| {
 				engine.update(app, |engine, cx| {
 					engine.apply_timeline_event(
@@ -8783,8 +8780,8 @@ mod tests {
 	/// over the real stack: rows track every pushed command, `done` flags
 	/// gray the redoable tail, and `jump_history` walks the stack both
 	/// ways (a row click's `row + 1` target).
-	#[gpui::test]
-	async fn real_engine_history_tracks_the_undo_stack(cx: &mut gpui::TestAppContext) {
+	#[gpui_kit::test]
+	async fn real_engine_history_tracks_the_undo_stack(cx: &mut gpui_kit::TestAppContext) {
 		let _media = media_lock();
 		let engine = cx.update(|cx| cx.new(RealEngine::create));
 		cx.update(|app| engine.update(app, |engine, cx| engine.new_project(cx)));
@@ -8850,8 +8847,8 @@ mod tests {
 	/// undo/redo round-trip it — the digit keys, the `⌘` variants and the
 	/// grid clicks all run this exact path. Also covers the timeline menu's
 	/// eligibility/checked state and the enable/disable detection.
-	#[gpui::test]
-	async fn real_engine_multicam_switch_round_trips_through_undo(cx: &mut gpui::TestAppContext) {
+	#[gpui_kit::test]
+	async fn real_engine_multicam_switch_round_trips_through_undo(cx: &mut gpui_kit::TestAppContext) {
 		use oak_node::block::clip_input::TEXTURE_INPUT;
 		let _media = media_lock();
 		let engine = cx.update(|cx| cx.new(RealEngine::create));
@@ -9002,7 +8999,7 @@ mod tests {
 		);
 
 		// The output card is the sequence node; a wire lands on it.
-		let output_id = gpui::node_graph::NodeId(seq.identity());
+		let output_id = crate::widgets::node_graph::NodeId(seq.identity());
 		assert!(
 			nodes.iter().any(|n| n.id == output_id),
 			"the sequence node is the graph's output card"
@@ -9036,8 +9033,8 @@ mod tests {
 	/// graph selection; selecting the effect's node in the graph updates the
 	/// inspector's stack target and the highlighted effect card; and a card
 	/// click selects the effect node again (the reverse direction).
-	#[gpui::test]
-	async fn selection_links_timeline_graph_and_inspector(cx: &mut gpui::TestAppContext) {
+	#[gpui_kit::test]
+	async fn selection_links_timeline_graph_and_inspector(cx: &mut gpui_kit::TestAppContext) {
 		let _media = media_lock();
 		let engine = cx.update(|cx| cx.new(RealEngine::create));
 
@@ -9138,7 +9135,7 @@ mod tests {
 			engine.update(app, |engine, cx| {
 				engine.apply_node_graph_event(
 					&NodeGraphEvent::SelectionChanged {
-						nodes: BTreeSet::from([gpui::node_graph::NodeId(effect_ident)]),
+						nodes: BTreeSet::from([crate::widgets::node_graph::NodeId(effect_ident)]),
 					},
 					cx,
 				);
@@ -9417,8 +9414,8 @@ mod tests {
 	/// size once the playhead rests (the tick loop schedules, the worker
 	/// renders, the drain installs, `cpu_frame` hands the fill to the
 	/// viewer).
-	#[gpui::test]
-	async fn real_engine_fills_full_res_behind_the_proxy(cx: &mut gpui::TestAppContext) {
+	#[gpui_kit::test]
+	async fn real_engine_fills_full_res_behind_the_proxy(cx: &mut gpui_kit::TestAppContext) {
 		let _media = media_lock();
 		let _worker = WorkerBinGuard::set();
 		let engine = cx.update(|cx| cx.new(RealEngine::create));
@@ -9478,8 +9475,8 @@ mod tests {
 	/// snapshot, so a bounded number of engine ticks after the edit the
 	/// program frame shows the new picture — without any playback
 	/// (the "edits only show during playback" report's regression).
-	#[gpui::test]
-	async fn effect_edit_updates_the_paused_frame(cx: &mut gpui::TestAppContext) {
+	#[gpui_kit::test]
+	async fn effect_edit_updates_the_paused_frame(cx: &mut gpui_kit::TestAppContext) {
 		let _media = media_lock();
 		let _worker = WorkerBinGuard::set();
 		let engine = cx.update(|cx| cx.new(RealEngine::create));
@@ -9517,7 +9514,7 @@ mod tests {
 			})
 		});
 
-		let frame_bytes = |cx: &mut gpui::TestAppContext| -> Vec<u8> {
+		let frame_bytes = |cx: &mut gpui_kit::TestAppContext| -> Vec<u8> {
 			cx.read(|app| {
 				engine
 					.read(app)
@@ -9581,8 +9578,8 @@ mod tests {
 	/// layout (user-mandated: V1, V2 on top, A1, A2 below) — and the
 	/// default layout is NOT an undoable edit (the undo stack stays
 	//  empty for the sequence's birth).
-	#[gpui::test]
-	async fn new_sequence_has_default_two_video_two_audio_tracks(cx: &mut gpui::TestAppContext) {
+	#[gpui_kit::test]
+	async fn new_sequence_has_default_two_video_two_audio_tracks(cx: &mut gpui_kit::TestAppContext) {
 		// Serializes with the other engine tests: `new_project` clears the
 		// GLOBAL undo stack, and this test asserts on it — running lock-free
 		// raced a parallel test's undo history.
@@ -9607,8 +9604,8 @@ mod tests {
 	/// and then call graphops::set_track_height (which locks it again)
 	/// inside the same scope — an instant self-deadlock. Completing this
 	/// call at all is the assertion.
-	#[gpui::test]
-	async fn set_track_height_does_not_self_deadlock(cx: &mut gpui::TestAppContext) {
+	#[gpui_kit::test]
+	async fn set_track_height_does_not_self_deadlock(cx: &mut gpui_kit::TestAppContext) {
 		let _media = media_lock();
 		let engine = cx.update(|cx| cx.new(RealEngine::create));
 		cx.update(|app| engine.update(app, |engine, cx| engine.new_project(cx)));
@@ -9620,8 +9617,8 @@ mod tests {
 	/// Dropping a video-with-audio footage places BOTH a video clip and a
 	/// linked audio clip at the same range in ONE undoable entry (the NLE
 	/// A/V drop): one undo removes both, and the clips are linked.
-	#[gpui::test]
-	async fn drop_av_footage_places_linked_video_and_audio_clips(cx: &mut gpui::TestAppContext) {
+	#[gpui_kit::test]
+	async fn drop_av_footage_places_linked_video_and_audio_clips(cx: &mut gpui_kit::TestAppContext) {
 		let _media = media_lock();
 		let engine = cx.update(|cx| cx.new(RealEngine::create));
 		cx.update(|app| engine.update(app, |engine, cx| engine.new_project(cx)));
@@ -9742,8 +9739,8 @@ mod tests {
 	/// video: dropping onto the V2 row places the video on V2 and the
 	/// linked audio on A2, not on A1 (the multi-drop piles onto A1
 	/// regression).
-	#[gpui::test]
-	async fn drop_av_footage_same_numbered_tracks(cx: &mut gpui::TestAppContext) {
+	#[gpui_kit::test]
+	async fn drop_av_footage_same_numbered_tracks(cx: &mut gpui_kit::TestAppContext) {
 		let _media = media_lock();
 		let engine = cx.update(|cx| cx.new(RealEngine::create));
 		cx.update(|app| engine.update(app, |engine, cx| engine.new_project(cx)));
@@ -9804,9 +9801,9 @@ mod tests {
 	/// When the same-numbered audio track is missing (A2 removed), the A/V
 	/// drop recreates it so the pair stays aligned; the first audio track
 	/// does not absorb the clip.
-	#[gpui::test]
+	#[gpui_kit::test]
 	async fn drop_av_footage_recreates_missing_same_numbered_audio_track(
-		cx: &mut gpui::TestAppContext,
+		cx: &mut gpui_kit::TestAppContext,
 	) {
 		let _media = media_lock();
 		let engine = cx.update(|cx| cx.new(RealEngine::create));
@@ -9869,8 +9866,8 @@ mod tests {
 	/// the linked clip stays on its own track and shifts by the same frame
 	/// offset, both for a same-track drag and a cross-track drag, and ONE
 	/// undo restores the whole group.
-	#[gpui::test]
-	async fn moving_a_linked_clip_drags_its_partner(cx: &mut gpui::TestAppContext) {
+	#[gpui_kit::test]
+	async fn moving_a_linked_clip_drags_its_partner(cx: &mut gpui_kit::TestAppContext) {
 		let _media = media_lock();
 		let engine = cx.update(|cx| cx.new(RealEngine::create));
 		cx.update(|app| engine.update(app, |engine, cx| engine.new_project(cx)));
@@ -9927,7 +9924,7 @@ mod tests {
 			)
 		});
 
-		let in_points = |cx: &mut gpui::TestAppContext, video_idx: usize, audio_idx: usize| {
+		let in_points = |cx: &mut gpui_kit::TestAppContext, video_idx: usize, audio_idx: usize| {
 			cx.read(|app| {
 				let engine = engine.read(app);
 				let video = engine.tracks[video_idx]
@@ -9944,7 +9941,7 @@ mod tests {
 			})
 		};
 
-		let move_video = |cx: &mut gpui::TestAppContext, track: usize, start: i64| {
+		let move_video = |cx: &mut gpui_kit::TestAppContext, track: usize, start: i64| {
 			cx.update(|app| {
 				engine.update(app, |engine, cx| {
 					engine.apply_timeline_event(
@@ -10001,8 +9998,8 @@ mod tests {
 	/// same frame delta (relative positions preserved) — and each selected
 	/// clip's linked partner follows even when the partner itself is not
 	/// selected. ONE undo restores the whole group.
-	#[gpui::test]
-	async fn moving_a_multi_selection_drags_the_whole_group(cx: &mut gpui::TestAppContext) {
+	#[gpui_kit::test]
+	async fn moving_a_multi_selection_drags_the_whole_group(cx: &mut gpui_kit::TestAppContext) {
 		let _media = media_lock();
 		let engine = cx.update(|cx| cx.new(RealEngine::create));
 		cx.update(|app| engine.update(app, |engine, cx| engine.new_project(cx)));
@@ -10068,7 +10065,7 @@ mod tests {
 				audio_idx,
 			)
 		});
-		let starts = |cx: &mut gpui::TestAppContext, id: ClipId, track: usize| {
+		let starts = |cx: &mut gpui_kit::TestAppContext, id: ClipId, track: usize| {
 			cx.read(|app| {
 				engine.read(app).tracks[track]
 					.clips
@@ -10130,8 +10127,8 @@ mod tests {
 	/// A clip cannot be dragged across track kinds: dropping a video clip
 	/// on an audio track (or an audio clip on a video track) is silently
 	/// ignored — no error, no movement.
-	#[gpui::test]
-	async fn cross_kind_drag_is_silently_ignored(cx: &mut gpui::TestAppContext) {
+	#[gpui_kit::test]
+	async fn cross_kind_drag_is_silently_ignored(cx: &mut gpui_kit::TestAppContext) {
 		let _media = media_lock();
 		let engine = cx.update(|cx| cx.new(RealEngine::create));
 		cx.update(|app| engine.update(app, |engine, cx| engine.new_project(cx)));
@@ -10175,7 +10172,7 @@ mod tests {
 			(video_id, audio_id, video_idx, audio_idx)
 		});
 
-		let snapshot = |cx: &mut gpui::TestAppContext, video_idx: usize, audio_idx: usize| {
+		let snapshot = |cx: &mut gpui_kit::TestAppContext, video_idx: usize, audio_idx: usize| {
 			cx.read(|app| {
 				let engine = engine.read(app);
 				let video = engine.tracks[video_idx]
@@ -10243,8 +10240,8 @@ mod tests {
 	/// toggle re-links it; and the two halves of a SPLIT clip — unlinked by
 	/// default — link manually (the reported regression: nothing happened
 	/// either way).
-	#[gpui::test]
-	async fn link_unlink_toggles_the_selection_links(cx: &mut gpui::TestAppContext) {
+	#[gpui_kit::test]
+	async fn link_unlink_toggles_the_selection_links(cx: &mut gpui_kit::TestAppContext) {
 		let _media = media_lock();
 		let engine = cx.update(|cx| cx.new(RealEngine::create));
 		cx.update(|app| engine.update(app, |engine, cx| engine.new_project(cx)));
@@ -10290,7 +10287,7 @@ mod tests {
 				.id;
 			(video, audio)
 		});
-		let linked = |cx: &mut gpui::TestAppContext, a: ClipId, b: ClipId| {
+		let linked = |cx: &mut gpui_kit::TestAppContext, a: ClipId, b: ClipId| {
 			cx.read(|app| {
 				let engine = engine.read(app);
 				let project = engine.project_ref().expect("project").clone();
@@ -10369,8 +10366,8 @@ mod tests {
 	/// Cmd+K split of an A/V pair: the front halves keep their link AND
 	/// the two rear halves are linked to each other (the old per-block
 	/// plain split left the rear halves unlinked).
-	#[gpui::test]
-	async fn split_at_playhead_links_the_rear_halves(cx: &mut gpui::TestAppContext) {
+	#[gpui_kit::test]
+	async fn split_at_playhead_links_the_rear_halves(cx: &mut gpui_kit::TestAppContext) {
 		let _media = media_lock();
 		let engine = cx.update(|cx| cx.new(RealEngine::create));
 		cx.update(|app| engine.update(app, |engine, cx| engine.new_project(cx)));
@@ -10404,7 +10401,7 @@ mod tests {
 
 		// Front/rear clips of the video track and the audio track (matched
 		// by their start frame: front starts at 0, rear at 20).
-		let clips_of = |kind: TrackKind, cx: &mut gpui::TestAppContext| {
+		let clips_of = |kind: TrackKind, cx: &mut gpui_kit::TestAppContext| {
 			cx.read(|app| {
 				let engine = engine.read(app);
 				let mut clips: Vec<ClipId> = engine
@@ -10417,7 +10414,7 @@ mod tests {
 				clips
 			})
 		};
-		let by_start = |kind: TrackKind, start: i64, cx: &mut gpui::TestAppContext| {
+		let by_start = |kind: TrackKind, start: i64, cx: &mut gpui_kit::TestAppContext| {
 			cx.read(|app| {
 				let engine = engine.read(app);
 				engine
@@ -10430,7 +10427,7 @@ mod tests {
 					.unwrap_or_else(|| panic!("a {kind:?} clip starts at {start}"))
 			})
 		};
-		let linked = |a: ClipId, b: ClipId, cx: &mut gpui::TestAppContext| {
+		let linked = |a: ClipId, b: ClipId, cx: &mut gpui_kit::TestAppContext| {
 			cx.read(|app| {
 				let engine = engine.read(app);
 				let project = engine.project_ref().expect("project").clone();
@@ -10466,8 +10463,8 @@ mod tests {
 	/// failing to serve it within the budget is a product failure. Set
 	/// `OAK_STRICT_PLAYBACK=1` to disable the skip entirely (a pool that
 	/// delivered nothing then fails the test).
-	#[gpui::test]
-	async fn playback_window_supplies_playhead_frames(cx: &mut gpui::TestAppContext) {
+	#[gpui_kit::test]
+	async fn playback_window_supplies_playhead_frames(cx: &mut gpui_kit::TestAppContext) {
 		let _media = media_lock();
 		let _worker = WorkerBinGuard::set();
 		let engine = cx.update(|cx| cx.new(RealEngine::create));
@@ -10576,8 +10573,8 @@ mod tests {
 	/// Probe: a single interactive seek must render the seeked frame
 	/// without hanging the UI path (the ruler mouse-down path goes through
 	/// request_frame + a synchronous cpu_frame render).
-	#[gpui::test]
-	async fn interactive_seek_renders_without_hanging(cx: &mut gpui::TestAppContext) {
+	#[gpui_kit::test]
+	async fn interactive_seek_renders_without_hanging(cx: &mut gpui_kit::TestAppContext) {
 		let _media = media_lock();
 		let _worker = WorkerBinGuard::set();
 		let engine = cx.update(|cx| cx.new(RealEngine::create));
@@ -10636,8 +10633,8 @@ mod tests {
 	/// A project with a real clip on the timeline survives a save/load
 	/// roundtrip (also the fixture generator for viewer debugging: the
 	/// saved file lands at a stable temp path).
-	#[gpui::test]
-	async fn save_load_roundtrips_a_timeline_clip(cx: &mut gpui::TestAppContext) {
+	#[gpui_kit::test]
+	async fn save_load_roundtrips_a_timeline_clip(cx: &mut gpui_kit::TestAppContext) {
 		let _media = media_lock();
 		let engine = cx.update(|cx| cx.new(RealEngine::create));
 		cx.update(|app| engine.update(app, |engine, cx| engine.new_project(cx)));
@@ -10703,8 +10700,8 @@ mod tests {
 	/// never delivered a slot AND the display never served a frame; a
 	/// delivered slot that the display path fails to serve is a product
 	/// failure. Set `OAK_STRICT_PLAYBACK=1` to disable the skip entirely.
-	#[gpui::test]
-	async fn playback_display_tracks_the_playhead(cx: &mut gpui::TestAppContext) {
+	#[gpui_kit::test]
+	async fn playback_display_tracks_the_playhead(cx: &mut gpui_kit::TestAppContext) {
 		let _media = media_lock();
 		let _worker = WorkerBinGuard::set();
 		let engine = cx.update(|cx| cx.new(RealEngine::create));
@@ -10971,8 +10968,8 @@ mod tests {
 	/// stream: the tick drops it and playback falls back to the wall clock
 	/// (the fail-safe that keeps playback alive when the device is closed
 	/// or headless).
-	#[gpui::test]
-	async fn audio_master_anchor_falls_back_to_wall_clock(cx: &mut gpui::TestAppContext) {
+	#[gpui_kit::test]
+	async fn audio_master_anchor_falls_back_to_wall_clock(cx: &mut gpui_kit::TestAppContext) {
 		let engine = cx.update(|cx| cx.new(RealEngine::create));
 		cx.update(|app| {
 			engine.update(app, |engine, cx| {
@@ -10993,8 +10990,8 @@ mod tests {
 	/// synchronous render — the "freeze on pause" regression. The engine
 	/// has no project, so any render path would fail; returning the cached
 	/// proxy proves the non-blocking fallback.
-	#[gpui::test]
-	async fn paused_playhead_miss_serves_last_displayed_frame(cx: &mut gpui::TestAppContext) {
+	#[gpui_kit::test]
+	async fn paused_playhead_miss_serves_last_displayed_frame(cx: &mut gpui_kit::TestAppContext) {
 		// Serialize with the other engine tests: a concurrent project adopt
 		// can bump the display-color generation, which clears the frame
 		// cache between the injection below and the read.
@@ -11041,8 +11038,8 @@ mod tests {
 	/// mount their nodes under the root folder (so the project explorer
 	/// lists them) and the parameters round-trip through
 	/// `sequence_parameters`.
-	#[gpui::test]
-	async fn engine_creates_folder_and_sequence_with_params(cx: &mut gpui::TestAppContext) {
+	#[gpui_kit::test]
+	async fn engine_creates_folder_and_sequence_with_params(cx: &mut gpui_kit::TestAppContext) {
 		let _media = media_lock();
 		let engine = cx.update(|cx| cx.new(RealEngine::create));
 		cx.update(|app| engine.update(app, |engine, cx| engine.new_project(cx)));
@@ -11146,9 +11143,9 @@ mod tests {
 	/// (the explorer lists it; it is NOT a sequence), and dropping it lands
 	/// a five-second generator clip on the host sequence's first video
 	/// track, wired through `tex_in` and undoable as one row.
-	#[gpui::test]
+	#[gpui_kit::test]
 	async fn engine_creates_text_footage_and_drops_it_on_the_timeline(
-		cx: &mut gpui::TestAppContext,
+		cx: &mut gpui_kit::TestAppContext,
 	) {
 		let _media = media_lock();
 		let engine = cx.update(|cx| cx.new(RealEngine::create));
@@ -11285,8 +11282,8 @@ mod tests {
 	/// a STANDALONE generator clip: one undo row, the clip labelled after
 	/// the generator, fed through `tex_in`, spanning five seconds from the
 	/// drop frame — and undo removes it.
-	#[gpui::test]
-	async fn engine_drops_a_generator_effect_as_a_clip(cx: &mut gpui::TestAppContext) {
+	#[gpui_kit::test]
+	async fn engine_drops_a_generator_effect_as_a_clip(cx: &mut gpui_kit::TestAppContext) {
 		let _media = media_lock();
 		let engine = cx.update(|cx| cx.new(RealEngine::create));
 		cx.update(|app| engine.update(app, |engine, cx| engine.new_project(cx)));
@@ -11373,8 +11370,8 @@ mod tests {
 	/// coverage for the drop failing with "the track has no frame rate"),
 	/// and a head-edge drop with no previous clip lands a single-sided
 	/// transition wired into the clip only.
-	#[gpui::test]
-	async fn engine_drops_a_transition_at_a_clip_edge(cx: &mut gpui::TestAppContext) {
+	#[gpui_kit::test]
+	async fn engine_drops_a_transition_at_a_clip_edge(cx: &mut gpui_kit::TestAppContext) {
 		let _media = media_lock();
 		let engine = cx.update(|cx| cx.new(RealEngine::create));
 		cx.update(|app| engine.update(app, |engine, cx| engine.new_project(cx)));
@@ -11442,8 +11439,8 @@ mod tests {
 	/// `AdjustmentBlockBehavior` with no footage and no texture wiring),
 	/// refuses audio tracks, resolves through the timeline selection, and is
 	/// undone by one undo step.
-	#[gpui::test]
-	async fn engine_adds_and_undoes_adjustment_layer(cx: &mut gpui::TestAppContext) {
+	#[gpui_kit::test]
+	async fn engine_adds_and_undoes_adjustment_layer(cx: &mut gpui_kit::TestAppContext) {
 		let _media = media_lock();
 		let engine = cx.update(|cx| cx.new(RealEngine::create));
 		cx.update(|app| engine.update(app, |engine, cx| engine.new_project(cx)));
@@ -11612,8 +11609,8 @@ mod tests {
 	/// `update_sequence_parameters` rewrites the name, the format and the
 	/// interlace flag in one call; `sequence_parameters` reads the new
 	/// state back (the properties dialog's commit path).
-	#[gpui::test]
-	async fn engine_update_sequence_parameters_round_trips(cx: &mut gpui::TestAppContext) {
+	#[gpui_kit::test]
+	async fn engine_update_sequence_parameters_round_trips(cx: &mut gpui_kit::TestAppContext) {
 		let _media = media_lock();
 		let engine = cx.update(|cx| cx.new(RealEngine::create));
 		cx.update(|app| engine.update(app, |engine, cx| engine.new_project(cx)));
@@ -11667,8 +11664,8 @@ mod tests {
 	/// Empty timeline + footage drop = the NLE auto-create path: a new
 	/// sequence sized to the footage's first video stream appears and the
 	/// clip lands on its default tracks.
-	#[gpui::test]
-	async fn drop_footage_on_empty_timeline_auto_creates_sequence(cx: &mut gpui::TestAppContext) {
+	#[gpui_kit::test]
+	async fn drop_footage_on_empty_timeline_auto_creates_sequence(cx: &mut gpui_kit::TestAppContext) {
 		let _media = media_lock();
 		let engine = cx.update(|cx| cx.new(RealEngine::create));
 		cx.update(|app| engine.update(app, |engine, cx| engine.new_project(cx)));
@@ -11748,8 +11745,8 @@ mod tests {
 	/// `footage_video_params`: the same values the auto-create path picks,
 	/// so the "use footage params" prompt offers what the sequence would
 	/// get.
-	#[gpui::test]
-	async fn footage_video_params_returns_the_probed_stream(cx: &mut gpui::TestAppContext) {
+	#[gpui_kit::test]
+	async fn footage_video_params_returns_the_probed_stream(cx: &mut gpui_kit::TestAppContext) {
 		let _media = media_lock();
 		let engine = cx.update(|cx| cx.new(RealEngine::create));
 		cx.update(|app| engine.update(app, |engine, cx| engine.new_project(cx)));
@@ -11804,8 +11801,8 @@ mod tests {
 	/// The wizard's create keeps the USER's sequence open (its playhead
 	/// clip becomes the multi-cam clip; switching to the source sequence
 	/// left N camera rows on the timeline and an "未检测到多机位片段" panel).
-	#[gpui::test]
-	async fn wizard_create_keeps_host_sequence_and_panel_detects(cx: &mut gpui::TestAppContext) {
+	#[gpui_kit::test]
+	async fn wizard_create_keeps_host_sequence_and_panel_detects(cx: &mut gpui_kit::TestAppContext) {
 		let _media = media_lock();
 		let engine = cx.update(|cx| cx.new(RealEngine::create));
 		cx.update(|app| engine.update(app, |engine, cx| engine.new_project(cx)));
@@ -11945,9 +11942,9 @@ mod tests {
 	/// (no camera rows) and rewires it to the multicam node, so the panel
 	/// resolves that clip to the multi-cam state — the "not detected"
 	/// report's drag shape.
-	#[gpui::test]
+	#[gpui_kit::test]
 	async fn drop_multicam_sequence_places_one_clip_and_panel_detects(
-		cx: &mut gpui::TestAppContext,
+		cx: &mut gpui_kit::TestAppContext,
 	) {
 		let _media = media_lock();
 		let engine = cx.update(|cx| cx.new(RealEngine::create));
@@ -12094,8 +12091,8 @@ mod tests {
 	/// AFV switch-follow: with two audio-bearing angles, switching to
 	/// source 1 re-points the host audio clip to angle 1's audio footage —
 	/// one undo restores the previous source's audio.
-	#[gpui::test]
-	async fn multicam_switch_follows_audio_to_the_new_source(cx: &mut gpui::TestAppContext) {
+	#[gpui_kit::test]
+	async fn multicam_switch_follows_audio_to_the_new_source(cx: &mut gpui_kit::TestAppContext) {
 		let _media = media_lock();
 		let engine = cx.update(|cx| cx.new(RealEngine::create));
 		cx.update(|app| engine.update(app, |engine, cx| engine.new_project(cx)));
@@ -12237,8 +12234,8 @@ mod tests {
 	/// imported footage renames through the engine (the label lands on the
 	/// node) and deletes with ONE undoable entry (the footage node is gone,
 	/// one undo restores it).
-	#[gpui::test]
-	async fn entry_rename_and_delete_are_real(cx: &mut gpui::TestAppContext) {
+	#[gpui_kit::test]
+	async fn entry_rename_and_delete_are_real(cx: &mut gpui_kit::TestAppContext) {
 		let _media = media_lock();
 		let engine = cx.update(|cx| cx.new(RealEngine::create));
 		cx.update(|app| engine.update(app, |engine, cx| engine.new_project(cx)));
@@ -12574,8 +12571,8 @@ mod tests {
 
 	/// No project open: every engine path returns its documented guard
 	/// (early return / Err / empty data source) without panicking.
-	#[gpui::test]
-	async fn engine_without_a_project_hits_the_guard_paths(cx: &mut gpui::TestAppContext) {
+	#[gpui_kit::test]
+	async fn engine_without_a_project_hits_the_guard_paths(cx: &mut gpui_kit::TestAppContext) {
 		// The library guards below depend on the process-global storage
 		// config: serialize with the config tests (the shared lock) and pin
 		// the backend OFF so a concurrent test's transient "sqlite" cannot
@@ -12601,7 +12598,7 @@ mod tests {
 		assert!(!cx.read(|app| {
 			engine
 				.read(app)
-				.can_connect(gpui::node_graph::PortId(0), gpui::node_graph::PortId(0))
+				.can_connect(crate::widgets::node_graph::PortId(0), crate::widgets::node_graph::PortId(0))
 		}));
 		assert!(cx.read(|app| engine.read(app).protected_graph_nodes()).is_empty());
 		assert!(cx.read(|app| engine.read(app).effects()).is_empty());
@@ -12706,7 +12703,7 @@ mod tests {
 				engine.apply_node_graph_event(
 					&NodeGraphEvent::NodeMoveRequested {
 						nodes: Vec::new(),
-						delta: gpui::point(px(0.0), px(0.0)),
+						delta: gpui_kit::point(px(0.0), px(0.0)),
 					},
 					cx,
 				);
@@ -12950,7 +12947,7 @@ mod tests {
 	/// source is long enough for trim/slide/roll edits at the sequence
 	/// rate). Returns the engine, the media path and the footage entry id.
 	fn eng_import_media(
-		cx: &mut gpui::TestAppContext,
+		cx: &mut gpui_kit::TestAppContext,
 		tag: &str,
 	) -> (Entity<RealEngine>, PathBuf, u64) {
 		let engine = cx.update(|cx| cx.new(RealEngine::create));
@@ -12978,7 +12975,7 @@ mod tests {
 	/// Places one footage clip on a video track through the real graphops
 	/// path and applies the engine's edit bookkeeping.
 	fn eng_place_clip(
-		cx: &mut gpui::TestAppContext,
+		cx: &mut gpui_kit::TestAppContext,
 		engine: &Entity<RealEngine>,
 		entry: u64,
 		track_index: usize,
@@ -13010,8 +13007,8 @@ mod tests {
 	/// The preferences-backed project settings: playback divider, proxy
 	/// toggle, OCIO override, cache location and the working/output color
 	/// settings all round-trip (and normalize bad input).
-	#[gpui::test]
-	async fn engine_settings_and_color_round_trip(cx: &mut gpui::TestAppContext) {
+	#[gpui_kit::test]
+	async fn engine_settings_and_color_round_trip(cx: &mut gpui_kit::TestAppContext) {
 		let _media = media_lock();
 		let _divider = ConfigRestore::of("PlaybackDivider");
 		let _proxy = ConfigRestore::of(CONFIG_KEY_USE_PROXY);
@@ -13180,8 +13177,8 @@ mod tests {
 	/// timeline snapshot, remove), the work area flows through the
 	/// preview/commit/clear events, and the clipboard Cut/Paste is one
 	/// undoable paste at the playhead.
-	#[gpui::test]
-	async fn engine_workarea_markers_and_clipboard_round_trip(cx: &mut gpui::TestAppContext) {
+	#[gpui_kit::test]
+	async fn engine_workarea_markers_and_clipboard_round_trip(cx: &mut gpui_kit::TestAppContext) {
 		let _media = media_lock();
 		let (engine, media, entry) = eng_import_media(cx, "workarea");
 
@@ -13263,7 +13260,7 @@ mod tests {
 		// Clipboard: copy the placed clip, cut it (one undo restores it),
 		// delete it again so the timeline is empty, then paste it back at
 		// the playhead.
-		let clips = |cx: &mut gpui::TestAppContext| -> Vec<ClipId> {
+		let clips = |cx: &mut gpui_kit::TestAppContext| -> Vec<ClipId> {
 			cx.read(|app| {
 				let engine = engine.read(app);
 				engine
@@ -13324,8 +13321,8 @@ mod tests {
 	/// slide, slip, split, transition length, track height and delete all
 	/// land on the graph (each as one undoable entry), plus a
 	/// `split_at_playhead` and a default-transition insert.
-	#[gpui::test]
-	async fn engine_applies_timeline_edit_events(cx: &mut gpui::TestAppContext) {
+	#[gpui_kit::test]
+	async fn engine_applies_timeline_edit_events(cx: &mut gpui_kit::TestAppContext) {
 		let _media = media_lock();
 		let (engine, media, entry) = eng_import_media(cx, "tl_events");
 
@@ -13333,7 +13330,7 @@ mod tests {
 		eng_place_clip(cx, &engine, entry, 0, 0, 25, 0);
 		eng_place_clip(cx, &engine, entry, 0, 25, 50, 0);
 
-		let ranges = |cx: &mut gpui::TestAppContext| -> Vec<(i64, i64, i64)> {
+		let ranges = |cx: &mut gpui_kit::TestAppContext| -> Vec<(i64, i64, i64)> {
 			cx.read(|app| {
 				engine
 					.read(app)
@@ -13347,7 +13344,7 @@ mod tests {
 					.collect()
 			})
 		};
-		let ids = |cx: &mut gpui::TestAppContext| -> Vec<ClipId> {
+		let ids = |cx: &mut gpui_kit::TestAppContext| -> Vec<ClipId> {
 			cx.read(|app| {
 				engine
 					.read(app)
@@ -13361,7 +13358,7 @@ mod tests {
 		assert_eq!(initial.len(), 2, "two clips placed: {initial:?}");
 		let (a, b) = (ids(cx)[0], ids(cx)[1]);
 
-		let apply = |cx: &mut gpui::TestAppContext, event: TimelineEvent| {
+		let apply = |cx: &mut gpui_kit::TestAppContext, event: TimelineEvent| {
 			cx.update(|app| {
 				engine.update(app, |engine, cx| engine.apply_timeline_event(&event, cx))
 			});
@@ -13554,14 +13551,14 @@ mod tests {
 		apply(
 			cx,
 			TimelineEvent::ContextMenuRequested {
-				position: gpui::point(px(0.0), px(0.0)),
-				hit: gpui::timeline::TimelineHit::Ruler(Frame(3)),
+				position: gpui_kit::point(px(0.0), px(0.0)),
+				hit: crate::widgets::timeline::TimelineHit::Ruler(Frame(3)),
 			},
 		);
 
 		// The default transition lands between an adjacent pair (the split
 		// halves are contiguous).
-		let spans = |cx: &mut gpui::TestAppContext| -> Vec<(ClipId, i64, i64)> {
+		let spans = |cx: &mut gpui_kit::TestAppContext| -> Vec<(ClipId, i64, i64)> {
 			cx.read(|app| {
 				engine
 					.read(app)
@@ -13623,8 +13620,8 @@ mod tests {
 	/// The effect-stack events: enable, expand, reorder, remove, the
 	/// library drag-add, and the card selection; plus the node-graph
 	/// selection mirror and the edit fallback.
-	#[gpui::test]
-	async fn engine_effect_and_node_graph_events(cx: &mut gpui::TestAppContext) {
+	#[gpui_kit::test]
+	async fn engine_effect_and_node_graph_events(cx: &mut gpui_kit::TestAppContext) {
 		let _media = media_lock();
 		let (engine, media, entry) = eng_import_media(cx, "fx_events");
 		eng_place_clip(cx, &engine, entry, 0, 0, 25, 0);
@@ -13757,7 +13754,7 @@ mod tests {
 				engine.apply_effect_event(
 					&EffectStackEvent::ContextMenuRequested {
 						effect,
-						position: gpui::point(px(0.0), px(0.0)),
+						position: gpui_kit::point(px(0.0), px(0.0)),
 					},
 					cx,
 				);
@@ -13832,7 +13829,7 @@ mod tests {
 			engine.update(app, |engine, cx| {
 				engine.apply_node_graph_event(
 					&NodeGraphEvent::SelectionChanged {
-						nodes: BTreeSet::from([gpui::node_graph::NodeId(effect.0)]),
+						nodes: BTreeSet::from([crate::widgets::node_graph::NodeId(effect.0)]),
 					},
 					cx,
 				);
@@ -13847,8 +13844,8 @@ mod tests {
 				engine.apply_node_graph_event(
 					&NodeGraphEvent::SelectionChanged {
 						nodes: BTreeSet::from([
-							gpui::node_graph::NodeId(effect.0),
-							gpui::node_graph::NodeId(0),
+							crate::widgets::node_graph::NodeId(effect.0),
+							crate::widgets::node_graph::NodeId(0),
 						]),
 					},
 					cx,
@@ -13867,34 +13864,34 @@ mod tests {
 				engine.apply_node_graph_event(
 					&NodeGraphEvent::NodeMovePreview {
 						nodes: Vec::new(),
-						delta: gpui::point(px(0.0), px(0.0)),
+						delta: gpui_kit::point(px(0.0), px(0.0)),
 					},
 					cx,
 				);
 				engine.apply_node_graph_event(
 					&NodeGraphEvent::ViewChanged {
-						offset: gpui::point(px(0.0), px(0.0)),
+						offset: gpui_kit::point(px(0.0), px(0.0)),
 						zoom: 1.0,
 					},
 					cx,
 				);
 				engine.apply_node_graph_event(
 					&NodeGraphEvent::BackgroundClicked {
-						position: gpui::point(px(0.0), px(0.0)),
+						position: gpui_kit::point(px(0.0), px(0.0)),
 					},
 					cx,
 				);
 				engine.apply_node_graph_event(
 					&NodeGraphEvent::NodeContextMenuRequested {
-						node: gpui::node_graph::NodeId(effect.0),
-						position: gpui::point(px(0.0), px(0.0)),
+						node: crate::widgets::node_graph::NodeId(effect.0),
+						position: gpui_kit::point(px(0.0), px(0.0)),
 					},
 					cx,
 				);
 				engine.apply_node_graph_event(
 					&NodeGraphEvent::NodeMoveRequested {
 						nodes: Vec::new(),
-						delta: gpui::point(px(0.0), px(0.0)),
+						delta: gpui_kit::point(px(0.0), px(0.0)),
 					},
 					cx,
 				);
@@ -13907,7 +13904,7 @@ mod tests {
 		assert!(!cx.read(|app| {
 			engine
 				.read(app)
-				.can_connect(gpui::node_graph::PortId(0), gpui::node_graph::PortId(0))
+				.can_connect(crate::widgets::node_graph::PortId(0), crate::widgets::node_graph::PortId(0))
 		}));
 
 		let _ = std::fs::remove_file(&media);
@@ -13916,8 +13913,8 @@ mod tests {
 	/// The proxy surface: rows/states for imported footage, custom-param
 	/// round-trips, the in-flight guard and the no-proxy delete/reveal
 	/// no-ops.
-	#[gpui::test]
-	async fn engine_proxy_rows_and_params(cx: &mut gpui::TestAppContext) {
+	#[gpui_kit::test]
+	async fn engine_proxy_rows_and_params(cx: &mut gpui_kit::TestAppContext) {
 		use crate::oakui::engine::{ProxyMediaState, ProxyParamsUi};
 		let _media = media_lock();
 		let _proxy = ConfigRestore::of(CONFIG_KEY_USE_PROXY);
@@ -14047,8 +14044,8 @@ mod tests {
 	/// place; unknown ids, folders, missing files and non-media targets are
 	/// rejected. Entry lookups (path/length/name) resolve through the same
 	/// identity.
-	#[gpui::test]
-	async fn engine_replace_footage_and_entry_lookups(cx: &mut gpui::TestAppContext) {
+	#[gpui_kit::test]
+	async fn engine_replace_footage_and_entry_lookups(cx: &mut gpui_kit::TestAppContext) {
 		let _media = media_lock();
 		let (engine, media_a, entry_a) = eng_import_media(cx, "replace_a");
 		let media_b = std::env::temp_dir().join(format!("oakapp_replace_b_{}.mp4", std::process::id()));
@@ -14121,8 +14118,8 @@ mod tests {
 	/// The source monitor renders the selected footage through the real
 	/// ticket path; a decode failure (media removed) falls back to the
 	/// synthetic pattern and latches the slot unavailable.
-	#[gpui::test]
-	async fn engine_source_monitor_renders_selected_footage(cx: &mut gpui::TestAppContext) {
+	#[gpui_kit::test]
+	async fn engine_source_monitor_renders_selected_footage(cx: &mut gpui_kit::TestAppContext) {
 		let _media = media_lock();
 		let _worker = WorkerBinGuard::set();
 		assert!(
@@ -14250,8 +14247,8 @@ mod tests {
 	/// unknown extensions, `.otio` / `.fcpxml` go through the oaktask
 	/// interchange task, and every exported file opens back through the
 	/// matching loader.
-	#[gpui::test]
-	async fn engine_project_files_round_trip_each_format(cx: &mut gpui::TestAppContext) {
+	#[gpui_kit::test]
+	async fn engine_project_files_round_trip_each_format(cx: &mut gpui_kit::TestAppContext) {
 		let _media = media_lock();
 		let (engine, media, entry) = eng_import_media(cx, "formats");
 		eng_place_clip(cx, &engine, entry, 0, 0, 25, 0);
@@ -14297,8 +14294,8 @@ mod tests {
 
 	/// A contentless `<olive>` document still opens (with a warning) and a
 	/// malformed document reports Err.
-	#[gpui::test]
-	async fn engine_open_ove_empty_and_malformed_documents(cx: &mut gpui::TestAppContext) {
+	#[gpui_kit::test]
+	async fn engine_open_ove_empty_and_malformed_documents(cx: &mut gpui_kit::TestAppContext) {
 		let _media = media_lock();
 		let engine = cx.update(|cx| cx.new(RealEngine::create));
 		let pid = std::process::id();
@@ -14327,8 +14324,8 @@ mod tests {
 
 	/// An export session runs end-to-end on the background thread: the
 	/// events arrive, the task finishes successfully and the file lands.
-	#[gpui::test]
-	async fn engine_export_session_finishes(cx: &mut gpui::TestAppContext) {
+	#[gpui_kit::test]
+	async fn engine_export_session_finishes(cx: &mut gpui_kit::TestAppContext) {
 		let _media = media_lock();
 		let _worker = WorkerBinGuard::set();
 		assert!(
@@ -14424,8 +14421,8 @@ mod tests {
 	/// The SQLite library lifecycle through the engine facade: create,
 	/// list, rename, duplicate, export/import to a file, open and delete —
 	/// all against a temp database.
-	#[gpui::test]
-	async fn engine_library_lifecycle_with_sqlite(cx: &mut gpui::TestAppContext) {
+	#[gpui_kit::test]
+	async fn engine_library_lifecycle_with_sqlite(cx: &mut gpui_kit::TestAppContext) {
 		let _media = media_lock();
 		let _backend = ConfigRestore::of(CONFIG_KEY_STORAGE_BACKEND);
 		let _sqlite = ConfigRestore::of("Storage/SqlitePath");
@@ -14534,8 +14531,8 @@ mod tests {
 	/// Clips with footage source-start times synchronize to the earliest
 	/// source head as ONE labeled multi command; the eligibility counter
 	/// reports both clips.
-	#[gpui::test]
-	async fn engine_syncs_clips_by_source_time(cx: &mut gpui::TestAppContext) {
+	#[gpui_kit::test]
+	async fn engine_syncs_clips_by_source_time(cx: &mut gpui_kit::TestAppContext) {
 		let _media = media_lock();
 		let (engine, media, entry) = eng_import_media(cx, "sync_src");
 		// Two clips of the same footage on two video tracks at the same
@@ -14621,8 +14618,8 @@ mod tests {
 
 	/// The waveform synchronizer path: eligibility after a real waveform
 	/// extraction, and both the plain and speed-search runs.
-	#[gpui::test]
-	async fn engine_syncs_clips_by_waveform(cx: &mut gpui::TestAppContext) {
+	#[gpui_kit::test]
+	async fn engine_syncs_clips_by_waveform(cx: &mut gpui_kit::TestAppContext) {
 		let _media = media_lock();
 		let (engine, media, entry) = eng_import_media(cx, "sync_wave");
 		eng_place_clip(cx, &engine, entry, 0, 0, 25, 0);
@@ -14671,8 +14668,8 @@ mod tests {
 	/// The multicam wizard's audio-offset estimation over two real angle
 	/// files: a single angle returns its zero offset, two angles correlate
 	/// through the audio envelopes, and a missing angle fails.
-	#[gpui::test]
-	async fn engine_multicam_wizard_sync_offsets_with_angles(cx: &mut gpui::TestAppContext) {
+	#[gpui_kit::test]
+	async fn engine_multicam_wizard_sync_offsets_with_angles(cx: &mut gpui_kit::TestAppContext) {
 		let _media = media_lock();
 		let engine = cx.update(|cx| cx.new(RealEngine::create));
 		cx.update(|app| engine.update(app, |engine, cx| engine.new_project(cx)));
@@ -14740,8 +14737,8 @@ mod tests {
 	/// The proxy generation lifecycle: `proxy_generate` submits the task,
 	/// the tick drain finalizes it (ready or failed), the row reflects the
 	/// final state, and `proxy_delete` clears the recorded path.
-	#[gpui::test]
-	async fn engine_proxy_generate_and_delete(cx: &mut gpui::TestAppContext) {
+	#[gpui_kit::test]
+	async fn engine_proxy_generate_and_delete(cx: &mut gpui_kit::TestAppContext) {
 		use crate::oakui::engine::ProxyMediaState;
 		let _media = media_lock();
 		let _proxy = ConfigRestore::of(CONFIG_KEY_USE_PROXY);
@@ -14816,7 +14813,7 @@ mod tests {
 			);
 			assert_eq!(
 				badge,
-				Some(gpui_widgets::project_explorer::ProxyBadge::Failed),
+				Some(crate::widgets::project_explorer::ProxyBadge::Failed),
 				"the bin row carries the Failed badge"
 			);
 		} else {
@@ -14827,7 +14824,7 @@ mod tests {
 			);
 			assert_eq!(
 				badge,
-				Some(gpui_widgets::project_explorer::ProxyBadge::Ready),
+				Some(crate::widgets::project_explorer::ProxyBadge::Ready),
 				"the bin row carries the Ready badge"
 			);
 		}
@@ -14847,8 +14844,8 @@ mod tests {
 
 	/// An audio-only media file drops onto the audio track (no video clip),
 	/// auto-creating the default sequence when the timeline is empty.
-	#[gpui::test]
-	async fn engine_drops_audio_only_footage(cx: &mut gpui::TestAppContext) {
+	#[gpui_kit::test]
+	async fn engine_drops_audio_only_footage(cx: &mut gpui_kit::TestAppContext) {
 		let _media = media_lock();
 		let engine = cx.update(|cx| cx.new(RealEngine::create));
 		cx.update(|app| engine.update(app, |engine, cx| engine.new_project(cx)));
@@ -14909,8 +14906,8 @@ mod tests {
 	/// The multicam angle-frame pipeline: the first read schedules a
 	/// background render, the drain installs it, and the cache serves the
 	/// exact playhead afterwards. Out-of-range sources are rejected.
-	#[gpui::test]
-	async fn engine_multicam_angle_frames_render(cx: &mut gpui::TestAppContext) {
+	#[gpui_kit::test]
+	async fn engine_multicam_angle_frames_render(cx: &mut gpui_kit::TestAppContext) {
 		let _media = media_lock();
 		let _worker = WorkerBinGuard::set();
 		assert!(
@@ -14976,8 +14973,8 @@ mod tests {
 	/// The timeline/effect data-source accessors the widgets read every
 	/// frame: track metadata, clip metadata, the inspector selection and
 	/// the effect-card fields.
-	#[gpui::test]
-	async fn engine_timeline_snapshot_accessors(cx: &mut gpui::TestAppContext) {
+	#[gpui_kit::test]
+	async fn engine_timeline_snapshot_accessors(cx: &mut gpui_kit::TestAppContext) {
 		let _media = media_lock();
 		let (engine, media, entry) = eng_import_media(cx, "accessors");
 		// Display row 0 is V2 (per-type index 1).
@@ -15109,8 +15106,8 @@ mod tests {
 	/// Timeline edit events that name unknown / stale clip ids resolve to
 	/// no-ops (every `clip_block` / lock guard), an out-of-range track
 	/// header toggle is ignored, and the inert solo toggle reports success.
-	#[gpui::test]
-	async fn timeline_edit_events_ignore_stale_clip_ids(cx: &mut gpui::TestAppContext) {
+	#[gpui_kit::test]
+	async fn timeline_edit_events_ignore_stale_clip_ids(cx: &mut gpui_kit::TestAppContext) {
 		let _media = media_lock();
 		let (engine, media, entry) = eng_import_media(cx, "tl_stale");
 		eng_place_clip(cx, &engine, entry, 0, 0, 25, 0);
@@ -15124,7 +15121,7 @@ mod tests {
 				.expect("a placed clip")
 		});
 		let bogus = ClipId(0xdead_beef);
-		let apply = |cx: &mut gpui::TestAppContext, event: TimelineEvent| {
+		let apply = |cx: &mut gpui_kit::TestAppContext, event: TimelineEvent| {
 			cx.update(|app| {
 				engine.update(app, |engine, cx| engine.apply_timeline_event(&event, cx))
 			});
@@ -15280,9 +15277,9 @@ mod tests {
 	/// recorded falls back to the filename extension (audio vs video) and
 	/// the 10-second default length, auto-creating a missing track; an A/V
 	/// footage with no probed duration also falls back to the default.
-	#[gpui::test]
+	#[gpui_kit::test]
 	async fn drop_footage_handles_unknown_entries_and_unprobed_media(
-		cx: &mut gpui::TestAppContext,
+		cx: &mut gpui_kit::TestAppContext,
 	) {
 		let _media = media_lock();
 
@@ -15455,8 +15452,8 @@ mod tests {
 	/// no video track, the wrong-kind pointed track (fallback to the first
 	/// video track), a valid nested-sequence drop and the failed placement
 	/// path.
-	#[gpui::test]
-	async fn sequence_and_text_drops_hit_their_guards(cx: &mut gpui::TestAppContext) {
+	#[gpui_kit::test]
+	async fn sequence_and_text_drops_hit_their_guards(cx: &mut gpui_kit::TestAppContext) {
 		let _media = media_lock();
 		let (engine, media, _entry) = eng_import_media(cx, "seq_text_guards");
 		let project = cx.read(|app| engine.read(app).project.clone().expect("project"));
@@ -15581,8 +15578,8 @@ mod tests {
 	/// The multicam host resolution and AFV helpers: no sequence, no
 	/// selection, no audio, missing video track, unprobed duration and the
 	/// empty-angle wizard failure.
-	#[gpui::test]
-	async fn wizard_host_and_afv_resolution_guards(cx: &mut gpui::TestAppContext) {
+	#[gpui_kit::test]
+	async fn wizard_host_and_afv_resolution_guards(cx: &mut gpui_kit::TestAppContext) {
 		let _media = media_lock();
 		let (engine, media, entry) = eng_import_media(cx, "wizard_guards");
 		let project = cx.read(|app| engine.read(app).project.clone().expect("project"));
@@ -15775,8 +15772,8 @@ mod tests {
 	/// Lookups that resolve selection / entry / proxy / sync state against
 	/// unknown ids and empty state: every `continue` / early `None` guard
 	/// runs and leaves the state untouched.
-	#[gpui::test]
-	async fn engine_lookups_ignore_unknown_ids_and_unselected_state(cx: &mut gpui::TestAppContext) {
+	#[gpui_kit::test]
+	async fn engine_lookups_ignore_unknown_ids_and_unselected_state(cx: &mut gpui_kit::TestAppContext) {
 		let _media = media_lock();
 		let _proxy = ConfigRestore::of(CONFIG_KEY_USE_PROXY);
 		config_set_bool(CONFIG_KEY_USE_PROXY, false);
@@ -15986,8 +15983,8 @@ mod tests {
 
 	/// The document open/export failure paths: an export to a missing
 	/// directory, the no-project guards and a bogus nested-sequence source.
-	#[gpui::test]
-	async fn document_export_and_interchange_failure_paths(cx: &mut gpui::TestAppContext) {
+	#[gpui_kit::test]
+	async fn document_export_and_interchange_failure_paths(cx: &mut gpui_kit::TestAppContext) {
 		let _media = media_lock();
 
 		// No project: the direct helpers report Err.
@@ -16257,8 +16254,8 @@ mod tests {
 	/// duplicate generation, a completed failure lands state 3 (and the
 	/// Failed disk state), a queued bogus id logs and drains, and the
 	/// autostart policy skips failures / opt-outs / ready files.
-	#[gpui::test]
-	async fn proxy_lifecycle_and_autostart_policy(cx: &mut gpui::TestAppContext) {
+	#[gpui_kit::test]
+	async fn proxy_lifecycle_and_autostart_policy(cx: &mut gpui_kit::TestAppContext) {
 		use crate::oakui::engine::{ExportEvent, ProxyMediaState};
 		let _media = media_lock();
 		let _proxy = ConfigRestore::of(CONFIG_KEY_USE_PROXY);
@@ -16518,8 +16515,8 @@ mod tests {
 	/// slot, so a delivered frame that `preview_slot_frame` fails to serve
 	/// is a product failure, not a starvation skip. Set
 	/// `OAK_STRICT_PLAYBACK=1` to disable the skip entirely.
-	#[gpui::test]
-	async fn source_monitor_playback_window_and_stale_cancels(cx: &mut gpui::TestAppContext) {
+	#[gpui_kit::test]
+	async fn source_monitor_playback_window_and_stale_cancels(cx: &mut gpui_kit::TestAppContext) {
 		let _media = media_lock();
 		let _worker = WorkerBinGuard::set();
 		let (engine, media, entry) = eng_import_media(cx, "source_window");
@@ -16641,8 +16638,8 @@ mod tests {
 	/// A render completion that lands after the window's generation
 	/// changed is released instead of installed (the stale-slot branch),
 	/// and the next window update rebuilds against the new generation.
-	#[gpui::test]
-	async fn preview_window_releases_stale_completions(cx: &mut gpui::TestAppContext) {
+	#[gpui_kit::test]
+	async fn preview_window_releases_stale_completions(cx: &mut gpui_kit::TestAppContext) {
 		let _media = media_lock();
 		let _worker = WorkerBinGuard::set();
 		let (engine, media, entry) = eng_import_media(cx, "stale_slot");
@@ -16714,8 +16711,8 @@ mod tests {
 	/// The playback-window slot reader's BGRA8 branch: a slot rendered in
 	/// the 8-bit wire format serves through the byte path (the F32 repack
 	/// rejects it).
-	#[gpui::test]
-	async fn preview_slot_frame_reads_bgra8_slots(cx: &mut gpui::TestAppContext) {
+	#[gpui_kit::test]
+	async fn preview_slot_frame_reads_bgra8_slots(cx: &mut gpui_kit::TestAppContext) {
 		let _media = media_lock();
 		let _worker = WorkerBinGuard::set();
 		let (engine, media, entry) = eng_import_media(cx, "bgra_slot");
@@ -16782,8 +16779,8 @@ mod tests {
 	/// The waveform synchronizer's placement path: unknown ids / non-clip
 	/// nodes / missing cache entries no-op, and two clips of the same media
 	/// correlate into one multi-command placement.
-	#[gpui::test]
-	async fn waveform_sync_places_clips_and_skips_unresolved(cx: &mut gpui::TestAppContext) {
+	#[gpui_kit::test]
+	async fn waveform_sync_places_clips_and_skips_unresolved(cx: &mut gpui_kit::TestAppContext) {
 		let _media = media_lock();
 		let (engine, media, entry) = eng_import_media(cx, "sync_wave_place");
 		// Two clips with the SAME media window on two video tracks, long
@@ -16842,8 +16839,8 @@ mod tests {
 	/// A clip whose media window lies entirely past the extracted audio
 	/// (a flat all-zero envelope) cannot correlate: the speed search runs
 	/// and fails, the candidate is dropped, and the sync is a no-op.
-	#[gpui::test]
-	async fn waveform_sync_skips_uncorrelatable_clips(cx: &mut gpui::TestAppContext) {
+	#[gpui_kit::test]
+	async fn waveform_sync_skips_uncorrelatable_clips(cx: &mut gpui_kit::TestAppContext) {
 		let _media = media_lock();
 		let (engine, media, entry) = eng_import_media(cx, "sync_wave_flat");
 		eng_place_clip(cx, &engine, entry, 0, 0, 35, 0);
@@ -16900,14 +16897,14 @@ mod tests {
 	/// The transition-drop planner: no sequence / no video track guards, a
 	/// point with no clip edge in range, single-sided transitions on an
 	/// isolated clip's head/tail, and the seam plan for a contiguous pair.
-	#[gpui::test]
-	async fn transition_drop_plan_variants(cx: &mut gpui::TestAppContext) {
+	#[gpui_kit::test]
+	async fn transition_drop_plan_variants(cx: &mut gpui_kit::TestAppContext) {
 		let _media = media_lock();
 		let (engine, media, entry) = eng_import_media(cx, "transition_plan");
 		let seq = cx.read(|app| engine.read(app).sequence.expect("sequence"));
 		eng_place_clip(cx, &engine, entry, 0, 0, 10, 0);
 		eng_place_clip(cx, &engine, entry, 0, 20, 30, 0);
-		let drop = |cx: &mut gpui::TestAppContext, track: usize, frame: i64| {
+		let drop = |cx: &mut gpui_kit::TestAppContext, track: usize, frame: i64| {
 			cx.update(|app| {
 				engine.update(app, |engine, cx| {
 					engine.drop_transition_at(
@@ -17001,8 +16998,8 @@ mod tests {
 
 	/// `update_preview_window`'s early returns for missing selection /
 	/// sequence metadata while the monitor is playing.
-	#[gpui::test]
-	async fn preview_window_skips_missing_selection_and_geometry(cx: &mut gpui::TestAppContext) {
+	#[gpui_kit::test]
+	async fn preview_window_skips_missing_selection_and_geometry(cx: &mut gpui_kit::TestAppContext) {
 		let _media = media_lock();
 		let (engine, media, _entry) = eng_import_media(cx, "preview_guards");
 

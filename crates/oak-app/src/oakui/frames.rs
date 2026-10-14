@@ -23,8 +23,8 @@
 //! test pattern, so playback is visibly moving while the engine metadata
 //! (project / sequence / tracks) comes from the real facade in real mode.
 
-use gpui::timeline::Frame;
-use gpui::RenderImage;
+use crate::widgets::timeline::Frame;
+use gpui_kit::RenderImage;
 
 /// Width of the synthetic test frame (a small proxy size; the real engine
 /// will deliver full-resolution frames).

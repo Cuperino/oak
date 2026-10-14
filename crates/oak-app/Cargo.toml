@@ -21,7 +21,7 @@
 [package]
 name = "oak-app"
 version.workspace = true
-edition = "2021"
+edition = "2024"
 description = "Oak Video Editor"
 license = "GPL-3.0-or-later"
 
@@ -38,13 +38,11 @@ name = "oak-editor"
 path = "src/main.rs"
 
 [dependencies]
-# gpui: the GPU-accelerated UI framework (oak-gpui fork, git submodule at gpui/).
-gpui = { path = "../../gpui/crates/gpui" }
-# Convenience entry point: `gpui_platform::application()` picks the platform
-# backend. font-kit enables text shaping/rendering on macOS.
-gpui_platform = { path = "../../gpui/crates/gpui_platform", features = ["font-kit"] }
-# Oak's widget library: menus, viewer, form controls, project explorer.
-gpui_widgets = { path = "../../gpui/crates/gpui_widgets" }
+# gpui-kit: the GPU-accelerated UI framework (registry: gpui-pre +
+# gpui-base + gpui-component). The fork's custom widget modules live in
+# oak-widgets (folding into this crate as `crate::widgets` when the
+# migration completes).
+gpui-kit = "0.7.3"
 # The mock engine's synthetic viewer frames (`image::Frame` in a
 # `RenderImage`), matching the versions gpui itself uses.
 image = "0.25"
@@ -54,13 +52,11 @@ smallvec = "1"
 # Rgba16Float texture data (10-bit code values are distinguishable in f16).
 wgpu = "29"
 half = "2.7.1"
-# Editable-text widget (used by the file / export dialogs' path fields, the
-# same gpui-elements crate gpui_widgets builds on).
-gpui_elements = { path = "../../gpui/crates/gpui_elements" }
 # UI string tables: YAML language packs under assets/i18n/, loaded at
 # runtime (bundled with the app, user-extensible) with the compiled-in
 # English table as the fallback.
 serde_yaml = "0.9"
+thiserror = "2"
 # The startup update check and the external oakvideoeditor.org links: a
 # blocking, bounded HTTPS GET (rustls) plus JSON response parsing. The
 # fetch runs on the gpui background executor, never on the UI thread.
@@ -83,8 +79,6 @@ oak-storage = { path = "../oak-storage" }
 oak-task = { path = "../oak-task" }
 oak-timeline = { path = "../oak-timeline" }
 oak-undo = { path = "../oak-undo" }
-oak-engine-rust-sdk = { path = "../oak-engine-rust-sdk" }
-gpui-kit = "0.7.3"
 [features]
 default = []
 # Force the mock engine even though the real facade is linked. Off by
@@ -101,11 +95,8 @@ mock-engine = []
 embed-resource = "3.0"
 
 [dev-dependencies]
-# `#[gpui::test]` harness for engine-seam smoke tests (test-support feature).
-gpui = { path = "../../gpui/crates/gpui", features = ["test-support"] }
-# `test-support` also enables `gpui_macos/test-support`, which is what makes
-# `render_to_image` (the screenshot example) available.
-gpui_platform = { path = "../../gpui/crates/gpui_platform", features = ["test-support"] }
+# `#[gpui_kit::test]` harness for engine-seam smoke tests.
+gpui-kit = { version = "0.7.3", features = ["test-support"] }
 # Screenshot capture: `examples/screenshot.rs` saves the rendered window PNG
 # (the `image` crate is already in the lockfile through gpui).
 image = "0.25"

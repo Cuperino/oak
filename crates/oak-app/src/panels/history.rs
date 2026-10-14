@@ -21,9 +21,11 @@
 //! stack to it (`row + 1`); a right-click opens a context menu with
 //! undo/redo and a jump-to-row action.
 
-use gpui::colors::DefaultColors;
-use gpui::dock::{DockPanel, PanelEvent};
-use gpui::{
+use gpui_kit::colors::DefaultColors;
+use gpui_kit::component::dock::{BasePanel, Panel, PanelEvent};
+use gpui_kit::{FocusHandle, Focusable};
+use crate::panels::PanelFocused;
+use gpui_kit::{
 	div, prelude::*, px, AnyElement, App, Context, ElementId, Entity, EventEmitter, MouseButton,
 	MouseDownEvent, Render, SharedString, Window,
 };
@@ -31,7 +33,6 @@ use crate::oakui::component::menu::{ContextMenu, ContextMenuEvent, Menu, MenuIte
 
 use crate::oakui::AppEngine;
 use crate::panels::commands::PanelCommandHandler;
-use crate::panels::ids::HISTORY;
 
 /// Context-menu item ids.
 const MENU_UNDO: usize = 1;
@@ -40,6 +41,9 @@ const MENU_JUMP_HERE: usize = 3;
 
 /// The history panel over the engine's undo stack.
 pub struct HistoryPanel<E: AppEngine> {
+	/// The panel's focus handle (the dock's zoom/focus and the
+	/// shell's focused-panel routing need it).
+	focus_handle: FocusHandle,
 	engine: Entity<E>,
 	/// The right-click menu (hidden until a row is right-clicked).
 	menu: Entity<ContextMenu>,
@@ -63,6 +67,7 @@ impl<E: AppEngine> HistoryPanel<E> {
 		.detach();
 
 		Self {
+			focus_handle: cx.focus_handle(),
 			engine,
 			menu,
 			menu_row: None,
@@ -88,7 +93,7 @@ impl<E: AppEngine> HistoryPanel<E> {
 	fn show_menu(
 		&mut self,
 		row: Option<usize>,
-		position: gpui::Point<gpui::Pixels>,
+		position: gpui_kit::Point<gpui_kit::Pixels>,
 		cx: &mut Context<Self>,
 	) {
 		let can_undo = self.engine.read(cx).can_undo();
@@ -218,7 +223,7 @@ impl<E: AppEngine> Render for HistoryPanel<E> {
 			// the shell uses to route focused-panel commands).
 			.on_mouse_down(MouseButton::Left, {
 				cx.listener(|_this, _event: &MouseDownEvent, _window, cx| {
-					cx.emit(PanelEvent::Focused);
+					cx.emit(PanelFocused);
 				})
 			})
 			// Right-clicking the blank area below the rows still opens
@@ -237,19 +242,23 @@ impl<E: AppEngine> Render for HistoryPanel<E> {
 
 impl<E: AppEngine> EventEmitter<PanelEvent> for HistoryPanel<E> {}
 
-impl<E: AppEngine> DockPanel for HistoryPanel<E> {
-	fn panel_id(&self) -> gpui::dock::PanelId {
-		HISTORY
-	}
+impl<E: AppEngine> EventEmitter<PanelFocused> for HistoryPanel<E> {}
 
-	fn title(&self, _cx: &App) -> SharedString {
-		crate::i18n::tr("panel.history").into()
+impl<E: AppEngine> Focusable for HistoryPanel<E> {
+	fn focus_handle(&self, _cx: &App) -> FocusHandle {
+		self.focus_handle.clone()
 	}
+}
 
-	fn tab_content(&self, _cx: &App) -> AnyElement {
-		div()
-			.child(crate::i18n::tr("panel.history"))
-			.into_any_element()
+impl<E: AppEngine> BasePanel for HistoryPanel<E> {
+	fn panel_name(&self) -> &'static str {
+		crate::panels::ids::HISTORY
+	}
+}
+
+impl<E: AppEngine> Panel for HistoryPanel<E> {
+	fn title(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+		crate::i18n::tr("panel.history")
 	}
 }
 
@@ -257,7 +266,7 @@ impl<E: AppEngine> DockPanel for HistoryPanel<E> {
 mod tests {
 	use super::*;
 	use crate::oakui::MockEngine;
-	use gpui::{size, Modifiers, TestAppContext, VisualTestContext};
+	use gpui_kit::{size, Modifiers, TestAppContext, VisualTestContext};
 
 	/// Builds the panel in a window and returns a `VisualTestContext`.
 	fn panel_window(
@@ -266,7 +275,10 @@ mod tests {
 		&'static mut VisualTestContext,
 		Entity<HistoryPanel<MockEngine>>,
 	) {
-		cx.update(|cx| cx.init_colors());
+		cx.update(|cx| {
+			gpui_kit::init(cx);
+			cx.init_colors();
+		});
 		let window = cx.open_window(size(px(320.0), px(400.0)), |window, cx| {
 			let engine = cx.new(MockEngine::demo);
 			HistoryPanel::new(engine, window, cx)
@@ -279,11 +291,11 @@ mod tests {
 
 	/// The mock engine keeps no undo stack, so the panel renders the empty
 	/// placeholder rather than stale demo rows.
-	#[gpui::test]
+	#[gpui_kit::test]
 	async fn empty_stack_shows_the_placeholder(cx: &mut TestAppContext) {
 		let (cx, _panel) = panel_window(cx);
 		cx.update(|window, cx| {
-			window.draw(cx).clear();
+			window.draw(cx).clear(cx);
 		});
 		// No rows rendered; the placeholder branch owns the body.
 		assert!(
@@ -294,22 +306,22 @@ mod tests {
 
 	/// Right-clicking the blank panel body opens the context menu with the
 	/// undo/redo entries (both disabled on an empty stack).
-	#[gpui::test]
+	#[gpui_kit::test]
 	async fn right_click_opens_the_context_menu(cx: &mut TestAppContext) {
 		let (cx, _panel) = panel_window(cx);
 		cx.update(|window, cx| {
-			window.draw(cx).clear();
+			window.draw(cx).clear(cx);
 		});
 		assert!(cx.debug_bounds("menu-popup").is_none(), "menu starts hidden");
 
 		cx.simulate_mouse_down(
-			gpui::point(px(160.0), px(200.0)),
+			gpui_kit::point(px(160.0), px(200.0)),
 			MouseButton::Right,
 			Modifiers::none(),
 		);
 		cx.run_until_parked();
 		cx.update(|window, cx| {
-			window.draw(cx).clear();
+			window.draw(cx).clear(cx);
 		});
 
 		let popup = cx
@@ -321,10 +333,13 @@ mod tests {
 	/// A real engine's undo stack renders as rows (the row-list branch of
 	/// `render`); the menu actions route to the engine, the blank-area
 	/// right-click opens the menu, and the dock metadata is populated.
-	#[gpui::test]
+	#[gpui_kit::test]
 	async fn rows_render_and_interact(cx: &mut TestAppContext) {
 		let _lock = crate::oakui::graphops::test_lock();
-		cx.update(|cx| cx.init_colors());
+		cx.update(|cx| {
+			gpui_kit::init(cx);
+			cx.init_colors();
+		});
 		let window = cx.open_window(size(px(320.0), px(400.0)), |window, cx| {
 			let engine = cx.new(crate::oakui::RealEngine::create);
 			HistoryPanel::new(engine, window, cx)
@@ -339,7 +354,7 @@ mod tests {
 			panel.update(app, |panel, cx| {
 				panel.engine.update(cx, |engine, cx| {
 					engine.new_project(cx);
-					engine.add_track(gpui::timeline::TrackKind::Video, cx);
+					engine.add_track(crate::widgets::timeline::TrackKind::Video, cx);
 				});
 			});
 		});
@@ -353,32 +368,28 @@ mod tests {
 			"the pointer starts at the top of the seeded stack"
 		);
 		cx.update(|window, cx| {
-			window.draw(cx).clear();
+			window.draw(cx).clear(cx);
 		});
 
 		// Dock metadata.
 		cx.update(|_window, app| {
-			assert!(!panel.read(app).title(app).is_empty());
-			assert_eq!(panel.read(app).panel_id(), HISTORY, "the dock routes by id");
-			// `tab_content` only builds an element with no mounted bounds to
-			// inspect in this test, so the call is a no-panic smoke check.
-			let _ = panel.read(app).tab_content(app);
+			assert_eq!(panel.read(app).panel_name(), crate::panels::ids::HISTORY, "the dock routes by id");
 		});
 
 		// Left click focuses the panel (the dock re-emits the event).
 		cx.simulate_mouse_down(
-			gpui::point(px(160.0), px(380.0)),
+			gpui_kit::point(px(160.0), px(380.0)),
 			MouseButton::Left,
 			Modifiers::none(),
 		);
 		// Right-clicking the blank body opens the menu without a row.
 		cx.simulate_mouse_down(
-			gpui::point(px(160.0), px(380.0)),
+			gpui_kit::point(px(160.0), px(380.0)),
 			MouseButton::Right,
 			Modifiers::none(),
 		);
 		cx.update(|window, cx| {
-			window.draw(cx).clear();
+			window.draw(cx).clear(cx);
 		});
 		assert!(cx.debug_bounds("menu-popup").is_some(), "blank-area menu opens");
 
@@ -416,9 +427,9 @@ mod tests {
 				panel.on_menu(9999, cx);
 				assert_eq!(panel.engine.read(cx).history_index(), total);
 
-				panel.show_menu(None, gpui::point(px(5.0), px(5.0)), cx);
+				panel.show_menu(None, gpui_kit::point(px(5.0), px(5.0)), cx);
 				assert_eq!(panel.menu_row, None);
-				panel.show_menu(Some(0), gpui::point(px(5.0), px(5.0)), cx);
+				panel.show_menu(Some(0), gpui_kit::point(px(5.0), px(5.0)), cx);
 				assert_eq!(panel.menu_row, Some(0));
 
 				// Jump-here targets the last right-clicked row: row 0 maps

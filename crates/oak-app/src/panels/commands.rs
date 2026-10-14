@@ -27,9 +27,9 @@
 //! [`ActionId`] onto the matching trait method so panel implementations and
 //! the action registry stay in one place.
 
-use gpui::timeline::Frame;
-use gpui::{App, Context, Entity};
-use gpui_widgets::viewer::PlaybackClock;
+use crate::widgets::timeline::Frame;
+use gpui_kit::{App, Context, Entity};
+use crate::widgets::viewer::PlaybackClock;
 
 use crate::actions::ActionId;
 use crate::oakui::{AppEngine, Monitor};
@@ -395,8 +395,8 @@ mod tests {
 	use super::*;
 	use crate::actions::{ActionId, REGISTRY};
 	use crate::oakui::MockEngine;
-	use gpui::timeline::{Frame, TimelineDataSource as _};
-	use gpui::{AppContext as _, TestAppContext};
+	use crate::widgets::timeline::{Frame, TimelineDataSource as _};
+	use gpui_kit::{AppContext as _, TestAppContext};
 
 	/// A panel that overrides nothing: every command falls through.
 	struct DefaultPanel;
@@ -424,7 +424,7 @@ mod tests {
 	/// Every registry action dispatches onto the matching trait method,
 	/// and a panel that implements none of them declines all of them —
 	/// which also exercises every default body.
-	#[gpui::test]
+	#[gpui_kit::test]
 	async fn default_panel_declines_every_registered_action(cx: &mut TestAppContext) {
 		cx.update(|app| {
 			let panel = app.new(|_| DefaultPanel);
@@ -443,7 +443,7 @@ mod tests {
 	/// A panel that handles `PlayPause` stops the fall-through for that
 	/// action only; the multicam actions map their numbered ids onto
 	/// `(source, split_clip)` pairs.
-	#[gpui::test]
+	#[gpui_kit::test]
 	async fn dispatch_propagates_handled_actions_and_multicam_arguments(
 		cx: &mut TestAppContext,
 	) {
@@ -477,7 +477,7 @@ mod tests {
 
 	/// The viewer transport maps actions onto the monitor's clock: play /
 	/// pause toggling, stepping, jumps to start/end and the shuttle keys.
-	#[gpui::test]
+	#[gpui_kit::test]
 	async fn viewer_transport_drives_the_monitor_clock(cx: &mut TestAppContext) {
 		cx.update(|app| {
 			let engine = app.new(MockEngine::create);

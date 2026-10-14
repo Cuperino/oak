@@ -32,14 +32,15 @@ use crate::oakui::component::controls::{CheckBox, CheckBoxEvent, CheckState};
 use crate::oakui::component::controls::{ComboBox, ComboBoxEvent, ComboBoxOption};
 use crate::oakui::component::controls::{SpinBox, SpinBoxEvent};
 use crate::oakui::component::text_input;
-use gpui::colors::DefaultColors;
-use gpui::prelude::*;
-use gpui::timeline::FrameRate;
-use gpui::{
+use gpui_kit::colors::DefaultColors;
+use gpui_kit::prelude::*;
+use crate::widgets::timeline::FrameRate;
+use gpui_kit::{
 	div, px, App, ClickEvent, Context, ElementId, Entity, EventEmitter, FocusHandle, Focusable,
 	InteractiveElement, Keystroke, PathPromptOptions, Render, SharedString, Window,
 };
-use gpui_elements::editable_text::{EditableTextState, StringStorage, TextChanged};
+use gpui_kit::base::input::InputState;
+use gpui_kit::component::input::InputEvent;
 
 use crate::actions::ActionId;
 use crate::i18n;
@@ -57,7 +58,7 @@ use crate::oakui::real::{
 // The `DisplayBitDepth` config key lives with the format mapping it
 // drives (oak-render's backend); the preferences dropdown and the
 // window-layer consumer share the same key.
-use oak_engine_rust_sdk::core::CONFIG_KEY_DISPLAY_BIT_DEPTH;
+use oak_core::backend::CONFIG_KEY_DISPLAY_BIT_DEPTH;
 
 // ---------------------------------------------------------------------------
 // Preferences
@@ -81,7 +82,7 @@ pub enum PreferencesEvent {
 	DisplayColorChanged,
 }
 
-impl gpui::EventEmitter<PreferencesEvent> for PreferencesContent {}
+impl gpui_kit::EventEmitter<PreferencesEvent> for PreferencesContent {}
 
 /// The preferences dialog content, mirroring the C++ tabbed preferences as
 /// one grouped panel:
@@ -286,14 +287,14 @@ impl PreferencesContent {
 
 		// --- 缓存 Cache: the disk cache directory --------------------------
 		let cache_dir = cx.new(|cx| {
-			let editor = cx.new(|cx| EditableTextState::new(StringStorage::default(), cx));
+			let editor = cx.new(|cx| InputState::new(window, cx));
 			PathField {
 				editor,
 				enabled: true,
 			}
 		});
 		let configured_cache = config_get_string(CONFIG_KEY_DISK_CACHE_PATH);
-		cache_dir.update(cx, |field, cx| field.set_path(configured_cache, cx));
+		cache_dir.update(cx, |field, cx| field.set_path(configured_cache, window, cx));
 
 		// --- 缓存 Cache: the playback pre-render window (cache ahead) ------
 		// The number of frames the preview scheduler fills ahead of the
@@ -426,14 +427,14 @@ impl PreferencesContent {
 		})
 		.detach();
 		let display_icc_path = cx.new(|cx| {
-			let editor = cx.new(|cx| EditableTextState::new(StringStorage::default(), cx));
+			let editor = cx.new(|cx| InputState::new(window, cx));
 			PathField {
 				editor,
 				enabled: true,
 			}
 		});
 		let configured_icc = config_get_string(CONFIG_KEY_CUSTOM_ICC);
-		display_icc_path.update(cx, |field, cx| field.set_path(configured_icc, cx));
+		display_icc_path.update(cx, |field, cx| field.set_path(configured_icc, window, cx));
 
 		// --- 项目 Project: snapshot interval + default transition ----------
 		let snapshot_interval = cx.new(|cx| {
@@ -548,14 +549,14 @@ impl PreferencesContent {
 			combo.set_selected(Some(if storage_is_pg { 1 } else { 0 }), cx)
 		});
 		let storage_pg_url = cx.new(|cx| {
-			let editor = cx.new(|cx| EditableTextState::new(StringStorage::default(), cx));
+			let editor = cx.new(|cx| InputState::new(window, cx));
 			PathField {
 				editor,
 				enabled: true,
 			}
 		});
 		let configured_pg_url = config_get_string(CONFIG_KEY_PG_URL);
-		storage_pg_url.update(cx, |field, cx| field.set_path(configured_pg_url, cx));
+		storage_pg_url.update(cx, |field, cx| field.set_path(configured_pg_url, window, cx));
 
 		Self {
 			backend,
@@ -600,12 +601,11 @@ impl PreferencesContent {
 
 	/// Opens the platform file picker for a custom ICC profile.
 	fn browse_display_icc(&mut self, cx: &mut Context<Self>) {
-		let receiver = cx.prompt_for_paths(gpui::PathPromptOptions {
+		let receiver = cx.prompt_for_paths(gpui_kit::PathPromptOptions {
 			files: true,
 			directories: false,
 			multiple: false,
 			prompt: Some(i18n::tr("preferences.color.browse").into()),
-			allowed_extensions: Vec::new(),
 		});
 		cx.spawn(async move |this, cx| {
 			let Ok(Ok(Some(paths))) = receiver.await else {
@@ -614,9 +614,9 @@ impl PreferencesContent {
 			let Some(path) = paths.first() else {
 				return;
 			};
-			let _ = this.update(cx, |this, cx| {
+			let _ = this.update_in(cx, |this, window, cx| {
 				this.display_icc_path.update(cx, |field, cx| {
-					field.set_path(path.to_string_lossy().into_owned(), cx)
+					field.set_path(path.to_string_lossy().into_owned(), window, cx)
 				});
 				cx.notify();
 			});
@@ -639,12 +639,11 @@ impl PreferencesContent {
 	/// Opens the platform directory picker and lands the choice in the cache
 	/// directory field (committed with the field, on dialog close).
 	fn browse_cache_dir(&mut self, cx: &mut Context<Self>) {
-		let receiver = cx.prompt_for_paths(gpui::PathPromptOptions {
+		let receiver = cx.prompt_for_paths(gpui_kit::PathPromptOptions {
 			files: false,
 			directories: true,
 			multiple: false,
 			prompt: Some(i18n::tr("preferences.cache.browse").into()),
-			allowed_extensions: Vec::new(),
 		});
 		cx.spawn(async move |this, cx| {
 			let Ok(Ok(Some(paths))) = receiver.await else {
@@ -653,9 +652,9 @@ impl PreferencesContent {
 			let Some(path) = paths.first() else {
 				return;
 			};
-			let _ = this.update(cx, |this, cx| {
+			let _ = this.update_in(cx, |this, window, cx| {
 				this.cache_dir.update(cx, |field, cx| {
-					field.set_path(path.to_string_lossy().into_owned(), cx)
+					field.set_path(path.to_string_lossy().into_owned(), window, cx)
 				});
 				cx.notify();
 			});
@@ -721,10 +720,10 @@ fn backend_label(name: &str) -> String {
 
 /// A labeled form row: a small caption above the widget.
 fn form_row(
-	colors: &gpui::colors::Colors,
+	colors: &gpui_kit::colors::Colors,
 	label: SharedString,
 	widget: impl IntoElement,
-) -> gpui::Div {
+) -> gpui_kit::Div {
 	div()
 		.flex()
 		.flex_col()
@@ -734,7 +733,7 @@ fn form_row(
 }
 
 /// A group header separating the preference sections.
-fn section_header(colors: &gpui::colors::Colors, label: SharedString) -> gpui::Div {
+fn section_header(colors: &gpui_kit::colors::Colors, label: SharedString) -> gpui_kit::Div {
 	div()
 		.pt_2()
 		.text_color(colors.disabled)
@@ -953,7 +952,7 @@ impl Render for PreferencesContent {
 
 /// A text field with the same shape as the file dialog's path field.
 pub struct PathField {
-	editor: Entity<EditableTextState>,
+	editor: Entity<InputState>,
 	/// Whether the field accepts input (disabled fields dim and drop the
 	/// text-input handler, like the checkbox disabled state).
 	enabled: bool,
@@ -962,14 +961,19 @@ pub struct PathField {
 impl PathField {
 	/// The path currently entered.
 	pub fn path(&self, app: &App) -> SharedString {
-		self.editor.read(app).as_str().into()
+		self.editor.read(app).value()
 	}
 
 	/// Replaces the path shown in the field.
-	pub fn set_path(&mut self, path: impl Into<SharedString>, cx: &mut Context<Self>) {
+	pub fn set_path(
+		&mut self,
+		path: impl Into<SharedString>,
+		window: &mut Window,
+		cx: &mut Context<Self>,
+	) {
 		let path = path.into();
 		self.editor.update(cx, |editor, cx| {
-			editor.emplace(path.as_ref(), cx);
+			editor.set_value(path.as_ref(), window, cx);
 		});
 		cx.notify();
 	}
@@ -1169,7 +1173,7 @@ impl ExportDialogContent {
 		});
 
 		let path = cx.new(|cx| {
-			let editor = cx.new(|cx| EditableTextState::new(StringStorage::default(), cx));
+			let editor = cx.new(|cx| InputState::new(window, cx));
 			PathField {
 				editor,
 				enabled: true,
@@ -1305,10 +1309,15 @@ impl ExportDialogContent {
 	}
 
 	/// Pre-fills the output path.
-	pub fn set_path(&mut self, path: impl Into<SharedString>, cx: &mut Context<Self>) {
+	pub fn set_path(
+		&mut self,
+		path: impl Into<SharedString>,
+		window: &mut Window,
+		cx: &mut Context<Self>,
+	) {
 		let path = path.into();
 		self.path
-			.update(cx, |content, cx| content.set_path(path, cx));
+			.update(cx, |content, cx| content.set_path(path, window, cx));
 		cx.notify();
 	}
 
@@ -1586,14 +1595,14 @@ impl<E: crate::oakui::engine::AppEngine> ProxyDialogContent<E> {
 		});
 
 		let ffmpeg_path = cx.new(|cx| {
-			let editor = cx.new(|cx| EditableTextState::new(StringStorage::default(), cx));
+			let editor = cx.new(|cx| InputState::new(window, cx));
 			PathField {
 				editor,
 				enabled: true,
 			}
 		});
 		ffmpeg_path.update(cx, |field, cx| {
-			field.set_path(config_get_string(CONFIG_KEY_FFMPEG_PATH), cx)
+			field.set_path(config_get_string(CONFIG_KEY_FFMPEG_PATH), window, cx)
 		});
 
 		let rows = engine.read(cx).proxy_rows();
@@ -1928,14 +1937,14 @@ impl<E: crate::oakui::engine::AppEngine> ProjectPropertiesContent<E> {
 	/// Builds the content seeded from the engine's current project state.
 	pub fn new(engine: Entity<E>, window: &mut Window, cx: &mut Context<Self>) -> Self {
 		let ocio_config = cx.new(|cx| {
-			let editor = cx.new(|cx| EditableTextState::new(StringStorage::default(), cx));
+			let editor = cx.new(|cx| InputState::new(window, cx));
 			PathField {
 				editor,
 				enabled: true,
 			}
 		});
 		let configured_ocio = engine.read(cx).project_ocio_config();
-		ocio_config.update(cx, |field, cx| field.set_path(configured_ocio, cx));
+		ocio_config.update(cx, |field, cx| field.set_path(configured_ocio, window, cx));
 
 		let cache_options = vec![
 			ComboBoxOption::new(0, i18n::tr("projprops.cache.default")),
@@ -1962,13 +1971,13 @@ impl<E: crate::oakui::engine::AppEngine> ProjectPropertiesContent<E> {
 		.detach();
 
 		let custom_cache_path = cx.new(|cx| {
-			let editor = cx.new(|cx| EditableTextState::new(StringStorage::default(), cx));
+			let editor = cx.new(|cx| InputState::new(window, cx));
 			PathField {
 				editor,
 				enabled: cache_setting == 2,
 			}
 		});
-		custom_cache_path.update(cx, |field, cx| field.set_path(custom_path, cx));
+		custom_cache_path.update(cx, |field, cx| field.set_path(custom_path, window, cx));
 
 		// --- Color pipeline: working colorspace + delivery output --------
 		let working_options = vec![
@@ -2028,10 +2037,15 @@ impl<E: crate::oakui::engine::AppEngine> ProjectPropertiesContent<E> {
 	}
 
 	/// Replaces the OCIO config path (the 浏览… picker and tests).
-	pub fn set_ocio_config_path(&mut self, path: impl Into<SharedString>, cx: &mut Context<Self>) {
+	pub fn set_ocio_config_path(
+		&mut self,
+		path: impl Into<SharedString>,
+		window: &mut Window,
+		cx: &mut Context<Self>,
+	) {
 		let path = path.into();
 		self.ocio_config
-			.update(cx, |field, cx| field.set_path(path, cx));
+			.update(cx, |field, cx| field.set_path(path, window, cx));
 		cx.notify();
 	}
 
@@ -2041,10 +2055,15 @@ impl<E: crate::oakui::engine::AppEngine> ProjectPropertiesContent<E> {
 	}
 
 	/// Replaces the custom disk-cache path.
-	pub fn set_custom_cache_path(&mut self, path: impl Into<SharedString>, cx: &mut Context<Self>) {
+	pub fn set_custom_cache_path(
+		&mut self,
+		path: impl Into<SharedString>,
+		window: &mut Window,
+		cx: &mut Context<Self>,
+	) {
 		let path = path.into();
 		self.custom_cache_path
-			.update(cx, |field, cx| field.set_path(path, cx));
+			.update(cx, |field, cx| field.set_path(path, window, cx));
 		cx.notify();
 	}
 
@@ -2210,7 +2229,7 @@ impl<E: crate::oakui::engine::AppEngine> Render for ProjectPropertiesContent<E> 
 					if let Some(error) = &self.error {
 						div()
 							.debug_selector(|| "projprops-error".into())
-							.text_color(gpui::rgb(0xe5484d))
+							.text_color(gpui_kit::rgb(0xe5484d))
 							.text_xs()
 							.child(error.clone())
 					} else {
@@ -2256,8 +2275,8 @@ enum PreferencesTab {
 }
 
 /// A fully transparent color (for un-selected rows / tabs).
-fn transparent() -> gpui::Rgba {
-	gpui::Rgba {
+fn transparent() -> gpui_kit::Rgba {
+	gpui_kit::Rgba {
 		r: 0.0,
 		g: 0.0,
 		b: 0.0,
@@ -2367,9 +2386,9 @@ impl Render for PreferencesDialogContent {
 fn tab_button(
 	tab: PreferencesTab,
 	active: PreferencesTab,
-	colors: &gpui::colors::Colors,
+	colors: &gpui_kit::colors::Colors,
 	cx: &mut Context<PreferencesDialogContent>,
-) -> gpui::Stateful<gpui::Div> {
+) -> gpui_kit::Stateful<gpui_kit::Div> {
 	let selected = tab == active;
 	let label = match tab {
 		PreferencesTab::General => i18n::tr("preferences.tab.general"),
@@ -2459,7 +2478,7 @@ struct KeyboardRow {
 /// # Capture
 ///
 /// Clicking a row's shortcut field enters capture mode: a process-wide
-/// [`gpui::App::intercept_keystrokes`] subscription suppresses the global key
+/// [`gpui_kit::App::intercept_keystrokes`] subscription suppresses the global key
 /// map for as long as the capture is active, so the field's `on_key_down`
 /// sees *every* key — including the letters, digits and arrows that the
 /// registry binds (the shell's action listeners would otherwise swallow them
@@ -2481,7 +2500,7 @@ struct KeyboardRow {
 /// (refusing the assignment) would leave the user stuck when two popular
 /// defaults collide.
 pub struct KeyboardTabContent {
-	query: Entity<EditableTextState>,
+	query: Entity<InputState>,
 	rows: Vec<KeyboardRow>,
 	filter: String,
 	capturing: Option<usize>,
@@ -2492,16 +2511,19 @@ pub struct KeyboardTabContent {
 	/// while a row is capturing (see the capture notes above); it lives for
 	/// the tab's whole lifetime and only acts while `capturing` is set.
 	#[allow(dead_code)] // kept alive: dropping it unregisters the keystroke interceptor
-	interceptor: Option<gpui::Subscription>,
+	interceptor: Option<gpui_kit::Subscription>,
 }
 
 impl KeyboardTabContent {
 	/// Builds the tab, seeding one row per menu-bar action (the C++
 	/// `setup_kbd_shortcuts` enumeration).
-	pub fn new(_window: &mut Window, cx: &mut Context<Self>) -> Self {
-		let query = cx.new(|cx| EditableTextState::new(StringStorage::default(), cx));
-		cx.subscribe(&query, |this, _query, _event: &TextChanged, cx| {
-			this.filter = this.query.read(cx).as_str().to_string();
+	pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+		let query = cx.new(|cx| InputState::new(window, cx));
+		cx.subscribe(&query, |this, _query, event: &InputEvent, cx| {
+			if !matches!(event, InputEvent::Change) {
+				return;
+			}
+			this.filter = this.query.read(cx).value().to_string();
 			this.selected = None;
 			cx.notify();
 		})
@@ -2646,7 +2668,6 @@ impl KeyboardTabContent {
 			directories: false,
 			multiple: false,
 			prompt: Some(i18n::tr("preferences.keyboard.import").into()),
-			allowed_extensions: Vec::new(),
 		});
 		cx.spawn(async move |this, cx| {
 			let Ok(Ok(Some(paths))) = receiver.await else {
@@ -2970,14 +2991,14 @@ struct ActionSearchItem {
 /// appear — they have no menu item, exactly like the C++ "only the menu bar"
 /// enumeration.
 pub struct ActionSearchContent {
-	query: Entity<EditableTextState>,
+	query: Entity<InputState>,
 	items: Vec<ActionSearchItem>,
 	filter: String,
 	selection: Option<usize>,
 	/// The keystroke interceptor that routes Up/Down/Enter to the list while
 	/// the dialog is open (see [`ActionSearchContent::new`]).
 	#[allow(dead_code)] // kept alive: dropping it unregisters the keystroke interceptor
-	interceptor: Option<gpui::Subscription>,
+	interceptor: Option<gpui_kit::Subscription>,
 }
 
 /// A request the action search dialog emits.
@@ -3003,10 +3024,13 @@ impl ActionSearchContent {
 	/// the search field; every other keystroke passes through untouched (in
 	/// the real app the IME delivers text to the focused input independently
 	/// of the key map, so typing keeps working).
-	pub fn new(_window: &mut Window, cx: &mut Context<Self>) -> Self {
-		let query = cx.new(|cx| EditableTextState::new(StringStorage::default(), cx));
-		cx.subscribe(&query, |this, _query, _event: &TextChanged, cx| {
-			this.filter = this.query.read(cx).as_str().to_string();
+	pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+		let query = cx.new(|cx| InputState::new(window, cx));
+		cx.subscribe(&query, |this, _query, event: &InputEvent, cx| {
+			if !matches!(event, InputEvent::Change) {
+				return;
+			}
+			this.filter = this.query.read(cx).value().to_string();
 			let visible: Vec<usize> = this
 				.items
 				.iter()
@@ -3166,8 +3190,8 @@ impl Render for ActionSearchContent {
 							cx.notify();
 						}))
 						.on_mouse_down(
-							gpui::MouseButton::Left,
-							cx.listener(move |this, event: &gpui::MouseDownEvent, _window, cx| {
+							gpui_kit::MouseButton::Left,
+							cx.listener(move |this, event: &gpui_kit::MouseDownEvent, _window, cx| {
 								// Double-click executes.
 								if event.click_count >= 2 {
 									this.selection = Some(index);
@@ -3318,7 +3342,7 @@ impl Render for AboutContent {
 			.child(
 				div()
 					.text_color(colors.text)
-					.font_weight(gpui::FontWeight::BOLD)
+					.font_weight(gpui_kit::FontWeight::BOLD)
 					.child(format!("Oak Video Editor {}", env!("CARGO_PKG_VERSION"))),
 			)
 			.child(
@@ -3403,20 +3427,25 @@ fn sequence_rate_options() -> Vec<ComboBoxOption> {
 /// A text field for the sequence name, shaped like the export path field
 /// (its own editor so the name can be replaced without retyping).
 pub struct TextValue {
-	editor: Entity<EditableTextState>,
+	editor: Entity<InputState>,
 }
 
 impl TextValue {
 	/// The name currently entered.
 	pub fn value(&self, app: &App) -> SharedString {
-		self.editor.read(app).as_str().into()
+		self.editor.read(app).value()
 	}
 
 	/// Replaces the name shown in the field.
-	pub fn set_value(&mut self, value: impl Into<SharedString>, cx: &mut Context<Self>) {
+	pub fn set_value(
+		&mut self,
+		value: impl Into<SharedString>,
+		window: &mut Window,
+		cx: &mut Context<Self>,
+	) {
 		let value = value.into();
 		self.editor.update(cx, |editor, cx| {
-			editor.emplace(value.as_ref(), cx);
+			editor.set_value(value.as_ref(), window, cx);
 		});
 		cx.notify();
 	}
@@ -3645,7 +3674,7 @@ impl SequenceFormatFields {
 	}
 
 	/// The labeled form rows (preset, width/height, frame rate, interlaced).
-	pub fn rows(&self, colors: &gpui::colors::Colors) -> gpui::Div {
+	pub fn rows(&self, colors: &gpui_kit::colors::Colors) -> gpui_kit::Div {
 		let size_row = div()
 			.flex()
 			.gap_3()
@@ -3711,11 +3740,11 @@ impl<E: crate::oakui::engine::AppEngine> NewSequenceContent<E> {
 		cx: &mut Context<Self>,
 	) -> Self {
 		let name = cx.new(|cx| {
-			let editor = cx.new(|cx| EditableTextState::new(StringStorage::default(), cx));
+			let editor = cx.new(|cx| InputState::new(window, cx));
 			TextValue { editor }
 		});
 		name.update(cx, |field, cx| {
-			field.set_value(i18n::tr("seqprops.default_name"), cx)
+			field.set_value(i18n::tr("seqprops.default_name"), window, cx)
 		});
 
 		let format = cx.new(|cx| SequenceFormatFields::build(seed, window, cx));
@@ -3787,7 +3816,7 @@ impl<E: crate::oakui::engine::AppEngine> Render for NewSequenceContent<E> {
 			.child(if let Some(error) = &self.error {
 				div()
 					.debug_selector(|| "seqprops-error".into())
-					.text_color(gpui::rgb(0xe5484d))
+					.text_color(gpui_kit::rgb(0xe5484d))
 					.text_xs()
 					.child(error.clone())
 			} else {
@@ -3820,11 +3849,11 @@ impl<E: crate::oakui::engine::AppEngine> SequencePropertiesContent<E> {
 		let current = engine.read(cx).sequence_parameters(sequence_id);
 
 		let name = cx.new(|cx| {
-			let editor = cx.new(|cx| EditableTextState::new(StringStorage::default(), cx));
+			let editor = cx.new(|cx| InputState::new(window, cx));
 			TextValue { editor }
 		});
 		let current_name = current.as_ref().map(|p| p.name.as_str()).unwrap_or("");
-		name.update(cx, |field, cx| field.set_value(current_name, cx));
+		name.update(cx, |field, cx| field.set_value(current_name, window, cx));
 
 		let seed = match &current {
 			Some(params) => {
@@ -3928,7 +3957,7 @@ impl<E: crate::oakui::engine::AppEngine> Render for SequencePropertiesContent<E>
 			.child(if let Some(error) = &self.error {
 				div()
 					.debug_selector(|| "seqprops-error".into())
-					.text_color(gpui::rgb(0xe5484d))
+					.text_color(gpui_kit::rgb(0xe5484d))
 					.text_xs()
 					.child(error.clone())
 			} else {
@@ -3957,17 +3986,17 @@ pub enum DropSequenceChoice {
 pub struct DropSequenceChoiceContent {
 	/// The footage's first probed video stream (`width, height, rate,
 	/// interlaced`), when the footage carries one.
-	probed: Option<(u32, u32, gpui::timeline::FrameRate, bool)>,
+	probed: Option<(u32, u32, crate::widgets::timeline::FrameRate, bool)>,
 }
 
 impl DropSequenceChoiceContent {
 	/// Builds the content seeded with the footage's probed video stream.
-	pub fn new(probed: Option<(u32, u32, gpui::timeline::FrameRate, bool)>) -> Self {
+	pub fn new(probed: Option<(u32, u32, crate::widgets::timeline::FrameRate, bool)>) -> Self {
 		Self { probed }
 	}
 
 	/// The footage's probed parameters shown in the body.
-	pub fn probed(&self) -> Option<(u32, u32, gpui::timeline::FrameRate, bool)> {
+	pub fn probed(&self) -> Option<(u32, u32, crate::widgets::timeline::FrameRate, bool)> {
 		self.probed
 	}
 }
@@ -4037,11 +4066,11 @@ impl<E: crate::oakui::engine::AppEngine> MulticamWizardContent<E> {
 	/// Builds the content seeded with the engine's wizard footage.
 	pub fn new(engine: Entity<E>, window: &mut Window, cx: &mut Context<Self>) -> Self {
 		let name = cx.new(|cx| {
-			let editor = cx.new(|cx| EditableTextState::new(StringStorage::default(), cx));
+			let editor = cx.new(|cx| InputState::new(window, cx));
 			TextValue { editor }
 		});
 		name.update(cx, |field, cx| {
-			field.set_value(i18n::tr("multicam.wizard.default_name"), cx)
+			field.set_value(i18n::tr("multicam.wizard.default_name"), window, cx)
 		});
 		let sync = cx.new(|cx| {
 			let options = WIZARD_SYNC_MODES
@@ -4206,12 +4235,12 @@ pub struct RenameContent {
 
 impl RenameContent {
 	/// Builds the dialog seeded with the current name.
-	pub fn new(current: SharedString, _window: &mut Window, cx: &mut Context<Self>) -> Self {
+	pub fn new(current: SharedString, window: &mut Window, cx: &mut Context<Self>) -> Self {
 		let field = cx.new(|cx| {
-			let editor = cx.new(|cx| EditableTextState::new(StringStorage::default(), cx));
+			let editor = cx.new(|cx| InputState::new(window, cx));
 			TextValue { editor }
 		});
-		field.update(cx, |field, cx| field.set_value(current, cx));
+		field.update(cx, |field, cx| field.set_value(current, window, cx));
 		Self { field }
 	}
 
@@ -4320,11 +4349,11 @@ impl NewProjectContent {
 	/// Builds the dialog (default name, HD 1080p25).
 	pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
 		let name = cx.new(|cx| {
-			let editor = cx.new(|cx| EditableTextState::new(StringStorage::default(), cx));
+			let editor = cx.new(|cx| InputState::new(window, cx));
 			TextValue { editor }
 		});
 		name.update(cx, |field, cx| {
-			field.set_value(i18n::tr("manager.new.default_name"), cx)
+			field.set_value(i18n::tr("manager.new.default_name"), window, cx)
 		});
 		let format =
 			cx.new(|cx| SequenceFormatFields::build(SequenceFormatSeed::hd_1080p25(), window, cx));
@@ -4370,8 +4399,62 @@ mod tests {
 	use crate::oakui::engine::AppEngine;
 	use crate::oakui::MockEngine;
 
+
+	/// A minimal host view for tests that need a window (gpui-kit's input
+	/// states are built against one).
+	struct TestHost<V: gpui_kit::Render> {
+		content: gpui_kit::Entity<V>,
+	}
+
+	impl<V: gpui_kit::Render> gpui_kit::Render for TestHost<V> {
+		fn render(
+			&mut self,
+			_window: &mut gpui_kit::Window,
+			_cx: &mut gpui_kit::Context<Self>,
+		) -> impl gpui_kit::IntoElement {
+			div().size_full().child(self.content.clone())
+		}
+	}
+
+	/// Opens a window hosting the content built by `build`, returning the
+	/// window handle and the content entity.
+	fn windowed_content<V: gpui_kit::Render>(
+		cx: &mut gpui_kit::TestAppContext,
+		build: impl FnOnce(&mut gpui_kit::Window, &mut gpui_kit::Context<V>) -> V,
+	) -> (gpui_kit::AnyWindowHandle, gpui_kit::Entity<V>) {
+		cx.update(|cx| {
+			gpui_kit::init(cx);
+			cx.init_colors();
+		});
+		let mut captured = None;
+		let window = cx.open_window(
+			gpui_kit::size(gpui_kit::px(800.0), gpui_kit::px(600.0)),
+			|window, cx| {
+				let content = cx.new(|cx| build(window, cx));
+				captured = Some(content.clone());
+				TestHost { content }
+			},
+		);
+		cx.run_until_parked();
+		(window.into(), captured.expect("the content was built"))
+	}
+
+	/// Runs `f` against the content inside its window (the windowed setters
+	/// need `&mut Window`).
+	fn update_content<V: gpui_kit::Render>(
+		cx: &mut gpui_kit::TestAppContext,
+		window: gpui_kit::AnyWindowHandle,
+		content: &gpui_kit::Entity<V>,
+		f: impl FnOnce(&mut V, &mut gpui_kit::Window, &mut gpui_kit::Context<V>),
+	) {
+		cx.update_window(window, |_, window, cx| {
+			content.update(cx, |content, cx| f(content, window, cx));
+		})
+		.expect("window open");
+	}
+
 	fn keystroke(key: &str) -> Keystroke {
-		gpui::Keystroke::parse(key).unwrap()
+		gpui_kit::Keystroke::parse(key).unwrap()
 	}
 
 	/// Restores a config key when dropped: the app's config store is
@@ -4405,38 +4488,32 @@ mod tests {
 
 	/// A path field on its own (the dialogs' shared path widget): enabling
 	/// is idempotent and the path round-trips.
-	#[gpui::test]
-	async fn path_field_enable_toggles_and_with_enabled(cx: &mut gpui::TestAppContext) {
-		let field = cx.update(|cx| {
-			cx.new(|cx| {
-				let editor = cx.new(|cx| EditableTextState::new(StringStorage::default(), cx));
-				PathField {
-					editor,
-					enabled: true,
-				}
-			})
+	#[gpui_kit::test]
+	async fn path_field_enable_toggles_and_with_enabled(cx: &mut gpui_kit::TestAppContext) {
+		let (window, field) = windowed_content(cx, |window, cx| {
+			let editor = cx.new(|cx| InputState::new(window, cx));
+			PathField {
+				editor,
+				enabled: true,
+			}
 		});
-		cx.update(|cx| {
-			field.update(cx, |field, cx| {
-				// Re-enabling an already-enabled field is the no-op path.
-				field.set_enabled(true, cx);
-				assert!(field.enabled);
-				field.set_path("  /tmp/oak/profile.icc  ", cx);
-				assert_eq!(field.path(cx).as_ref(), "  /tmp/oak/profile.icc  ");
-				field.set_enabled(false, cx);
-				assert!(!field.enabled);
-			});
+		update_content(cx, window, &field, |field, window, cx| {
+			// Re-enabling an already-enabled field is the no-op path.
+			field.set_enabled(true, cx);
+			assert!(field.enabled);
+			field.set_path("  /tmp/oak/profile.icc  ", window, cx);
+			assert_eq!(field.path(cx).as_ref(), "  /tmp/oak/profile.icc  ");
+			field.set_enabled(false, cx);
+			assert!(!field.enabled);
 		});
 
-		let disabled = cx.update(|cx| {
-			cx.new(|cx| {
-				let editor = cx.new(|cx| EditableTextState::new(StringStorage::default(), cx));
-				PathField {
-					editor,
-					enabled: true,
-				}
-				.with_enabled(false)
-			})
+		let (_window2, disabled) = windowed_content(cx, |window, cx| {
+			let editor = cx.new(|cx| InputState::new(window, cx));
+			PathField {
+				editor,
+				enabled: true,
+			}
+			.with_enabled(false)
 		});
 		cx.update(|cx| assert!(!disabled.read(cx).enabled));
 	}
@@ -4501,11 +4578,14 @@ mod tests {
 	/// `extension()` (with MP4 fallbacks for a stale selection) and the
 	/// settings the engine consumes reflect the codec / color / range /
 	/// size controls.
-	#[gpui::test]
-	async fn export_dialog_format_extension_and_settings(cx: &mut gpui::TestAppContext) {
-		cx.update(|cx| cx.init_colors());
+	#[gpui_kit::test]
+	async fn export_dialog_format_extension_and_settings(cx: &mut gpui_kit::TestAppContext) {
+		cx.update(|cx| {
+			gpui_kit::init(cx);
+			cx.init_colors();
+		});
 		let window = cx.open_window(
-			gpui::size(gpui::px(440.0), gpui::px(400.0)),
+			gpui_kit::size(gpui_kit::px(440.0), gpui_kit::px(400.0)),
 			ExportDialogContent::new,
 		);
 		cx.run_until_parked();
@@ -4662,7 +4742,7 @@ mod tests {
 
 		// The full form renders (all rows + hint text).
 		cx.update_window(window.into(), |_root, window, cx| {
-			window.draw(cx).clear();
+			window.draw(cx).clear(cx);
 		})
 		.expect("window is still open");
 	}
@@ -4671,8 +4751,8 @@ mod tests {
 	/// backend / bit-depth / theme / proxy / decode / color / storage combos
 	/// and checkboxes, and the numeric spin boxes (value changed and
 	/// committed edits).
-	#[gpui::test]
-	async fn preferences_general_rows_write_the_config(cx: &mut gpui::TestAppContext) {
+	#[gpui_kit::test]
+	async fn preferences_general_rows_write_the_config(cx: &mut gpui_kit::TestAppContext) {
 		// Lock order: language → config (the other app test modules nest
 		// their process-wide locks in this order too, so parallel tests
 		// cannot deadlock).
@@ -4711,16 +4791,19 @@ mod tests {
 		config_set_string(CONFIG_KEY_STORAGE_BACKEND, "sqlite");
 		crate::i18n::set_language_code("en-US");
 
-		cx.update(|cx| cx.init_colors());
+		cx.update(|cx| {
+			gpui_kit::init(cx);
+			cx.init_colors();
+		});
 		let window = cx.open_window(
-			gpui::size(gpui::px(800.0), gpui::px(900.0)),
+			gpui_kit::size(gpui_kit::px(800.0), gpui_kit::px(900.0)),
 			PreferencesContent::new,
 		);
 		cx.run_until_parked();
 		let content = window.root(cx).expect("preferences content");
 		// The initial render (SQLite backend hides the connection row).
 		cx.update_window(window.into(), |_root, window, cx| {
-			window.draw(cx).clear();
+			window.draw(cx).clear(cx);
 		})
 		.expect("window is still open");
 
@@ -5035,7 +5118,7 @@ mod tests {
 		assert!(cx.read(|cx| content.read(cx).storage_is_pg));
 		// The PostgreSQL selection reveals the connection-string row.
 		cx.update_window(window.into(), |_root, window, cx| {
-			window.draw(cx).clear();
+			window.draw(cx).clear(cx);
 		})
 		.expect("window is still open");
 		cx.update(|cx| {
@@ -5054,8 +5137,8 @@ mod tests {
 	/// Seeding the preferences from non-default config values: the
 	/// alternate checkbox / combo states, the fallbacks for unknown values
 	/// and the numeric clamps.
-	#[gpui::test]
-	async fn preferences_seed_from_non_default_config(cx: &mut gpui::TestAppContext) {
+	#[gpui_kit::test]
+	async fn preferences_seed_from_non_default_config(cx: &mut gpui_kit::TestAppContext) {
 		let _guard = crate::oakui::graphops::test_lock();
 		let _backend = ConfigRestore::of(CONFIG_KEY_RENDERER_BACKEND);
 		let _bit_depth = ConfigRestore::of(CONFIG_KEY_DISPLAY_BIT_DEPTH);
@@ -5089,9 +5172,12 @@ mod tests {
 		// A negative / unparsable transition length falls back to 0.5s.
 		config_set_string(CONFIG_KEY_DEFAULT_TRANSITION_SEC, "-1.0");
 
-		cx.update(|cx| cx.init_colors());
+		cx.update(|cx| {
+			gpui_kit::init(cx);
+			cx.init_colors();
+		});
 		let window = cx.open_window(
-			gpui::size(gpui::px(800.0), gpui::px(900.0)),
+			gpui_kit::size(gpui_kit::px(800.0), gpui_kit::px(900.0)),
 			PreferencesContent::new,
 		);
 		cx.run_until_parked();
@@ -5164,7 +5250,7 @@ mod tests {
 		);
 		// The PostgreSQL row renders in this state.
 		cx.update_window(window.into(), |_root, window, cx| {
-			window.draw(cx).clear();
+			window.draw(cx).clear(cx);
 		})
 		.expect("window is still open");
 
@@ -5176,7 +5262,7 @@ mod tests {
 		config_set_int(CONFIG_KEY_PREVIEW_WINDOW, 5000);
 		config_set_string(CONFIG_KEY_DEFAULT_TRANSITION_SEC, "2.5");
 		let window = cx.open_window(
-			gpui::size(gpui::px(800.0), gpui::px(900.0)),
+			gpui_kit::size(gpui_kit::px(800.0), gpui_kit::px(900.0)),
 			PreferencesContent::new,
 		);
 		cx.run_until_parked();
@@ -5212,7 +5298,7 @@ mod tests {
 		);
 		// The SQLite state renders without the connection-string row.
 		cx.update_window(window.into(), |_root, window, cx| {
-			window.draw(cx).clear();
+			window.draw(cx).clear(cx);
 		})
 		.expect("window is still open");
 	}
@@ -5220,16 +5306,19 @@ mod tests {
 	/// The preferences dialog's free-text fields commit trimmed values on
 	/// close, and the folder/file pickers land their choice in the fields
 	/// (with cancels and empty answers leaving everything untouched).
-	#[gpui::test]
-	async fn preferences_commit_fields_and_browse_paths(cx: &mut gpui::TestAppContext) {
+	#[gpui_kit::test]
+	async fn preferences_commit_fields_and_browse_paths(cx: &mut gpui_kit::TestAppContext) {
 		let _guard = crate::oakui::graphops::test_lock();
 		let _cache = ConfigRestore::of(CONFIG_KEY_DISK_CACHE_PATH);
 		let _icc = ConfigRestore::of(crate::oakui::displaycolor::CONFIG_KEY_CUSTOM_ICC);
 		let _pg = ConfigRestore::of(CONFIG_KEY_PG_URL);
 
-		cx.update(|cx| cx.init_colors());
+		cx.update(|cx| {
+			gpui_kit::init(cx);
+			cx.init_colors();
+		});
 		let window = cx.open_window(
-			gpui::size(gpui::px(800.0), gpui::px(900.0)),
+			gpui_kit::size(gpui_kit::px(800.0), gpui_kit::px(900.0)),
 			PreferencesDialogContent::new,
 		);
 		cx.run_until_parked();
@@ -5237,19 +5326,20 @@ mod tests {
 		let general = cx.read(|cx| content.read(cx).general.clone());
 
 		// Typed (un-browsed) paths land trimmed when the dialog commits.
-		cx.update(|cx| {
+		cx.update_window(window.clone().into(), |_, window, cx| {
 			general.update(cx, |general, cx| {
 				general.cache_dir.update(cx, |field, cx| {
-					field.set_path("  /tmp/oak-cache  ", cx)
+					field.set_path("  /tmp/oak-cache  ", window, cx)
 				});
 				general.display_icc_path.update(cx, |field, cx| {
-					field.set_path("  /tmp/oak.icc  ", cx)
+					field.set_path("  /tmp/oak.icc  ", window, cx)
 				});
 				general.storage_pg_url.update(cx, |field, cx| {
-					field.set_path("  user:pass@localhost/oak  ", cx)
+					field.set_path("  user:pass@localhost/oak  ", window, cx)
 				});
 			});
-		});
+		})
+		.expect("preferences window");
 		cx.update(|cx| content.update(cx, |dialog, cx| dialog.commit_cache_dir(cx)));
 		assert_eq!(config_get_string(CONFIG_KEY_DISK_CACHE_PATH), "/tmp/oak-cache");
 		assert_eq!(
@@ -5320,8 +5410,8 @@ mod tests {
 	/// The tabbed preferences host forwards the general tab's events, turns
 	/// the keyboard tab's Changed into ShortcutsChanged, counts the action
 	/// rows and switches tabs from the debug-selector buttons.
-	#[gpui::test]
-	async fn preferences_dialog_tabs_and_event_forwarding(cx: &mut gpui::TestAppContext) {
+	#[gpui_kit::test]
+	async fn preferences_dialog_tabs_and_event_forwarding(cx: &mut gpui_kit::TestAppContext) {
 		// Lock order: language → config (see the general-rows test).
 		let _lang = crate::i18n::lang_test_lock()
 			.lock()
@@ -5332,9 +5422,12 @@ mod tests {
 		let _mode = ConfigRestore::of(crate::oakui::displaycolor::CONFIG_KEY_COLOR_MODE);
 		let _language = ConfigRestore::of("Language");
 
-		cx.update(|cx| cx.init_colors());
+		cx.update(|cx| {
+			gpui_kit::init(cx);
+			cx.init_colors();
+		});
 		let window = cx.open_window(
-			gpui::size(gpui::px(800.0), gpui::px(900.0)),
+			gpui_kit::size(gpui_kit::px(800.0), gpui_kit::px(900.0)),
 			PreferencesDialogContent::new,
 		);
 		cx.run_until_parked();
@@ -5391,9 +5484,9 @@ mod tests {
 		assert!(cx.read(|cx| content.read(cx).keyboard_tab_row_count(cx)) > 0);
 
 		// The tab buttons switch the active tab.
-		let mut visual = gpui::VisualTestContext::from_window(window.into(), cx);
+		let mut visual = gpui_kit::VisualTestContext::from_window(window.into(), cx);
 		visual.update(|window, cx| {
-			window.draw(cx).clear();
+			window.draw(cx).clear(cx);
 		});
 		let general_tab = visual
 			.debug_bounds("prefs-tab-general")
@@ -5401,12 +5494,12 @@ mod tests {
 		let keyboard_tab = visual
 			.debug_bounds("prefs-tab-keyboard")
 			.expect("the keyboard tab button is painted");
-		visual.simulate_click(keyboard_tab.center(), gpui::Modifiers::none());
+		visual.simulate_click(keyboard_tab.center(), gpui_kit::Modifiers::none());
 		assert_eq!(visual.read(|cx| content.read(cx).active), PreferencesTab::Keyboard);
 		visual.update(|window, cx| {
-			window.draw(cx).clear();
+			window.draw(cx).clear(cx);
 		});
-		visual.simulate_click(general_tab.center(), gpui::Modifiers::none());
+		visual.simulate_click(general_tab.center(), gpui_kit::Modifiers::none());
 		assert_eq!(visual.read(|cx| content.read(cx).active), PreferencesTab::General);
 
 		crate::i18n::set_language_code(&previous_language);
@@ -5415,8 +5508,8 @@ mod tests {
 	/// The proxy dialog seeds from the config, edits the global params,
 	/// generates / deletes proxies through the engine and applies the
 	/// custom-params checkbox on accept.
-	#[gpui::test]
-	async fn proxy_dialog_edits_generates_deletes_and_applies(cx: &mut gpui::TestAppContext) {
+	#[gpui_kit::test]
+	async fn proxy_dialog_edits_generates_deletes_and_applies(cx: &mut gpui_kit::TestAppContext) {
 		let _guard = crate::oakui::graphops::test_lock();
 		use crate::oakui::engine::ProxyMediaState;
 		let _width = ConfigRestore::of("ProxyWidth");
@@ -5439,10 +5532,13 @@ mod tests {
 		config_set_int("ProxyMaxConcurrent", 4);
 		config_set_string(CONFIG_KEY_FFMPEG_PATH, "/usr/bin/ffmpeg");
 
-		cx.update(|cx| cx.init_colors());
+		cx.update(|cx| {
+			gpui_kit::init(cx);
+			cx.init_colors();
+		});
 		let engine = cx.update(|cx| cx.new(MockEngine::demo));
 		let window = cx.open_window(
-			gpui::size(gpui::px(600.0), gpui::px(760.0)),
+			gpui_kit::size(gpui_kit::px(600.0), gpui_kit::px(760.0)),
 			{
 				let engine = engine.clone();
 				move |window, cx| ProxyDialogContent::new(engine, window, cx)
@@ -5487,11 +5583,16 @@ mod tests {
 				content
 					.max_concurrent
 					.update(cx, |spin, cx| spin.set_value(SliderValue::Integer(8), cx));
-				content.ffmpeg_path.update(cx, |field, cx| {
-					field.set_path("  /opt/ffmpeg  ", cx)
-				});
 			});
 		});
+		cx.update_window(window.clone().into(), |_, window, cx| {
+			content.update(cx, |content, cx| {
+				content.ffmpeg_path.update(cx, |field, cx| {
+					field.set_path("  /opt/ffmpeg  ", window, cx)
+				});
+			});
+		})
+		.expect("proxy dialog window");
 		let params = cx.read(|cx| content.read(cx).current_params(cx));
 		assert_eq!(params.divider, 8);
 		assert_eq!(params.width, 320);
@@ -5628,7 +5729,7 @@ mod tests {
 		// Render with the populated footage list, then with no footage (the
 		// empty hint row).
 		cx.update_window(window.into(), |_root, window, cx| {
-			window.draw(cx).clear();
+			window.draw(cx).clear(cx);
 		})
 		.expect("window is still open");
 		cx.update(|cx| {
@@ -5638,7 +5739,7 @@ mod tests {
 			})
 		});
 		cx.update_window(window.into(), |_root, window, cx| {
-			window.draw(cx).clear();
+			window.draw(cx).clear(cx);
 		})
 		.expect("window is still open");
 	}
@@ -5647,14 +5748,17 @@ mod tests {
 	/// field, an invalid OCIO config rejects the commit, a valid one applies
 	/// the cache + color settings, and every color-combo index maps to its
 	/// canonical setting string.
-	#[gpui::test]
-	async fn project_properties_commit_and_color_settings(cx: &mut gpui::TestAppContext) {
+	#[gpui_kit::test]
+	async fn project_properties_commit_and_color_settings(cx: &mut gpui_kit::TestAppContext) {
 		use oak_core::colormath::{OutputGamut, OutputTransfer, WorkingColorSpace};
 
-		cx.update(|cx| cx.init_colors());
+		cx.update(|cx| {
+			gpui_kit::init(cx);
+			cx.init_colors();
+		});
 		let engine = cx.update(|cx| cx.new(MockEngine::demo));
 		let window = cx.open_window(
-			gpui::size(gpui::px(560.0), gpui::px(600.0)),
+			gpui_kit::size(gpui_kit::px(560.0), gpui_kit::px(600.0)),
 			{
 				let engine = engine.clone();
 				move |window, cx| ProjectPropertiesContent::new(engine, window, cx)
@@ -5687,22 +5791,23 @@ mod tests {
 		assert!(!cx.read(|cx| content.read(cx).custom_cache_path.read(cx).enabled));
 
 		// An invalid OCIO config path rejects the commit and is not applied.
-		cx.update(|cx| {
+		cx.update_window(window.clone().into(), |_, window, cx| {
 			content.update(cx, |dialog, cx| {
-				dialog.set_ocio_config_path("/nonexistent/oak-dialogs.ocio", cx)
-			})
-		});
+				dialog.set_ocio_config_path("/nonexistent/oak-dialogs.ocio", window, cx)
+			});
+		})
+		.expect("preferences window");
 		let result = cx.update(|cx| content.update(cx, |dialog, cx| dialog.commit(cx)));
 		assert!(result.is_err());
 		assert!(cx.read(|cx| engine.read(cx).project_ocio_config()).is_empty());
 
 		// An empty path restores the app default; the cache location and
 		// color settings then apply (custom path trimmed).
-		cx.update(|cx| {
+		let _ = cx.update_window(window.clone().into(), |_, window, cx| {
 			content.update(cx, |dialog, cx| {
-				dialog.set_ocio_config_path("", cx);
+				dialog.set_ocio_config_path("", window, cx);
 				dialog.select_cache_setting(2, cx);
-				dialog.set_custom_cache_path("  /tmp/oak-proj-cache  ", cx);
+				dialog.set_custom_cache_path("  /tmp/oak-proj-cache  ", window, cx);
 				dialog
 					.working_space
 					.update(cx, |combo, cx| combo.set_selected(Some(1), cx));
@@ -5808,14 +5913,14 @@ mod tests {
 		// The clean form renders without the error row, then with it when a
 		// rejected commit is reported.
 		cx.update_window(window.into(), |_root, window, cx| {
-			window.draw(cx).clear();
+			window.draw(cx).clear(cx);
 		})
 		.expect("window is still open");
 		cx.update(|cx| {
 			content.update(cx, |dialog, cx| dialog.set_error(Some("bad config".into()), cx))
 		});
 		cx.update_window(window.into(), |_root, window, cx| {
-			window.draw(cx).clear();
+			window.draw(cx).clear(cx);
 		})
 		.expect("window is still open");
 		assert_eq!(
@@ -5827,12 +5932,15 @@ mod tests {
 	/// The shared sequence format fields: picking a preset fills the
 	/// dimensions and rate, editing any field snaps the preset back to
 	/// custom, and the interlaced checkbox accepts the toggled state.
-	#[gpui::test]
-	async fn sequence_format_fields_presets_and_custom(cx: &mut gpui::TestAppContext) {
-		cx.update(|cx| cx.init_colors());
+	#[gpui_kit::test]
+	async fn sequence_format_fields_presets_and_custom(cx: &mut gpui_kit::TestAppContext) {
+		cx.update(|cx| {
+			gpui_kit::init(cx);
+			cx.init_colors();
+		});
 		let engine = cx.update(|cx| cx.new(MockEngine::demo));
 		let window = cx.open_window(
-			gpui::size(gpui::px(520.0), gpui::px(560.0)),
+			gpui_kit::size(gpui_kit::px(520.0), gpui_kit::px(560.0)),
 			{
 				let engine = engine.clone();
 				move |window, cx| NewSequenceContent::new(engine, window, cx)
@@ -5954,11 +6062,14 @@ mod tests {
 		assert!(cx.read(|cx| content.read(cx).interlaced(cx)));
 
 		// Editing the name flows through the TextValue wrapper.
-		cx.update(|cx| {
+		cx.update_window(window.clone().into(), |_, window, cx| {
 			content.update(cx, |content, cx| {
-				content.name.update(cx, |name, cx| name.set_value("Opening", cx))
-			})
-		});
+				content
+					.name
+					.update(cx, |name, cx| name.set_value("Opening", window, cx))
+			});
+		})
+		.expect("window open");
 		assert_eq!(cx.read(|cx| content.read(cx).name(cx)).as_ref(), "Opening");
 
 		// The mock engine has no project surface: the commit fails and the
@@ -5976,7 +6087,7 @@ mod tests {
 		assert!(cx.read(|cx| content.read(cx).error().is_none()));
 
 		cx.update_window(window.into(), |_root, window, cx| {
-			window.draw(cx).clear();
+			window.draw(cx).clear(cx);
 		})
 		.expect("window is still open");
 	}
@@ -5985,9 +6096,12 @@ mod tests {
 	/// dimensions + interlaced) and its properties sibling falls back to the
 	/// HD defaults for a missing sequence; both report commit failures and
 	/// render.
-	#[gpui::test]
-	async fn new_sequence_and_properties_commit_paths(cx: &mut gpui::TestAppContext) {
-		cx.update(|cx| cx.init_colors());
+	#[gpui_kit::test]
+	async fn new_sequence_and_properties_commit_paths(cx: &mut gpui_kit::TestAppContext) {
+		cx.update(|cx| {
+			gpui_kit::init(cx);
+			cx.init_colors();
+		});
 		let engine = cx.update(|cx| cx.new(MockEngine::demo));
 
 		// A probed 512×512 @ 12.34 fps interlaced source seeds the dialog.
@@ -6000,7 +6114,7 @@ mod tests {
 			true,
 		);
 		let seeded = cx.open_window(
-			gpui::size(gpui::px(520.0), gpui::px(560.0)),
+			gpui_kit::size(gpui_kit::px(520.0), gpui_kit::px(560.0)),
 			{
 				let engine = engine.clone();
 				move |window, cx| NewSequenceContent::new_seeded(engine, seed, window, cx)
@@ -6024,13 +6138,13 @@ mod tests {
 		});
 		assert!(result.is_err(), "the mock has no project to create into");
 		cx.update_window(seeded.into(), |_root, window, cx| {
-			window.draw(cx).clear();
+			window.draw(cx).clear(cx);
 		})
 		.expect("window is still open");
 
 		// The default constructor seeds HD 1080p25.
 		let fresh = cx.open_window(
-			gpui::size(gpui::px(520.0), gpui::px(560.0)),
+			gpui_kit::size(gpui_kit::px(520.0), gpui_kit::px(560.0)),
 			{
 				let engine = engine.clone();
 				move |window, cx| NewSequenceContent::new(engine, window, cx)
@@ -6043,14 +6157,14 @@ mod tests {
 			crate::oakui::engine::VideoFormat::hd_1080p25()
 		);
 		cx.update_window(fresh.into(), |_root, window, cx| {
-			window.draw(cx).clear();
+			window.draw(cx).clear(cx);
 		})
 		.expect("window is still open");
 
 		// A missing sequence falls back to the custom HD seed with a blank
 		// name; committing reports the engine's failure.
 		let properties = cx.open_window(
-			gpui::size(gpui::px(520.0), gpui::px(560.0)),
+			gpui_kit::size(gpui_kit::px(520.0), gpui_kit::px(560.0)),
 			{
 				let engine = engine.clone();
 				move |window, cx| SequencePropertiesContent::new(engine, 42, window, cx)
@@ -6075,7 +6189,7 @@ mod tests {
 		});
 		assert!(cx.read(|cx| props.read(cx).error().is_some()));
 		cx.update_window(properties.into(), |_root, window, cx| {
-			window.draw(cx).clear();
+			window.draw(cx).clear(cx);
 		})
 		.expect("window is still open");
 	}
@@ -6083,12 +6197,15 @@ mod tests {
 	/// The multicam wizard lists the engine's angles, toggles row checks and
 	/// reports the selection / sync mode / name; the empty case renders the
 	/// no-footage hint.
-	#[gpui::test]
-	async fn multicam_wizard_selection_and_render(cx: &mut gpui::TestAppContext) {
-		cx.update(|cx| cx.init_colors());
+	#[gpui_kit::test]
+	async fn multicam_wizard_selection_and_render(cx: &mut gpui_kit::TestAppContext) {
+		cx.update(|cx| {
+			gpui_kit::init(cx);
+			cx.init_colors();
+		});
 		let engine = cx.update(|cx| cx.new(MockEngine::demo));
 		let window = cx.open_window(
-			gpui::size(gpui::px(520.0), gpui::px(560.0)),
+			gpui_kit::size(gpui_kit::px(520.0), gpui_kit::px(560.0)),
 			{
 				let engine = engine.clone();
 				move |window, cx| MulticamWizardContent::new(engine, window, cx)
@@ -6146,7 +6263,7 @@ mod tests {
 		});
 
 		cx.update_window(window.into(), |_root, window, cx| {
-			window.draw(cx).clear();
+			window.draw(cx).clear(cx);
 		})
 		.expect("window is still open");
 
@@ -6159,7 +6276,7 @@ mod tests {
 		});
 		assert!(!cx.read(|cx| content.read(cx).has_rows()));
 		cx.update_window(window.into(), |_root, window, cx| {
-			window.draw(cx).clear();
+			window.draw(cx).clear(cx);
 		})
 		.expect("window is still open");
 	}
@@ -6167,16 +6284,19 @@ mod tests {
 	/// The lightweight contents render without an engine: About, the
 	/// export-project format picker, the drop-sequence choice and the rename
 	/// field.
-	#[gpui::test]
-	async fn lightweight_dialog_contents_render(cx: &mut gpui::TestAppContext) {
-		cx.update(|cx| cx.init_colors());
-		let size = gpui::size(gpui::px(460.0), gpui::px(320.0));
+	#[gpui_kit::test]
+	async fn lightweight_dialog_contents_render(cx: &mut gpui_kit::TestAppContext) {
+		cx.update(|cx| {
+			gpui_kit::init(cx);
+			cx.init_colors();
+		});
+		let size = gpui_kit::size(gpui_kit::px(460.0), gpui_kit::px(320.0));
 
 		// About: static text.
 		let about = cx.open_window(size, |_window, _cx| AboutContent::new());
 		cx.run_until_parked();
 		cx.update_window(about.into(), |_root, window, cx| {
-			window.draw(cx).clear();
+			window.draw(cx).clear(cx);
 		})
 		.expect("window is still open");
 
@@ -6235,7 +6355,7 @@ mod tests {
 			"otio"
 		);
 		cx.update_window(export.into(), |_root, window, cx| {
-			window.draw(cx).clear();
+			window.draw(cx).clear(cx);
 		})
 		.expect("window is still open");
 
@@ -6251,7 +6371,7 @@ mod tests {
 			Some((1920, 1080, FrameRate::new(30000, 1001), true))
 		);
 		cx.update_window(probed.into(), |_root, window, cx| {
-			window.draw(cx).clear();
+			window.draw(cx).clear(cx);
 		})
 		.expect("window is still open");
 		let progressive = cx.open_window(size, |_window, _cx| {
@@ -6259,7 +6379,7 @@ mod tests {
 		});
 		cx.run_until_parked();
 		cx.update_window(progressive.into(), |_root, window, cx| {
-			window.draw(cx).clear();
+			window.draw(cx).clear(cx);
 		})
 		.expect("window is still open");
 		let audio_only =
@@ -6268,7 +6388,7 @@ mod tests {
 		let audio_content = audio_only.root(cx).expect("drop choice content");
 		assert!(cx.read(|cx| audio_content.read(cx).probed()).is_none());
 		cx.update_window(audio_only.into(), |_root, window, cx| {
-			window.draw(cx).clear();
+			window.draw(cx).clear(cx);
 		})
 		.expect("window is still open");
 
@@ -6284,18 +6404,21 @@ mod tests {
 			"Old Name"
 		);
 		cx.update_window(rename.into(), |_root, window, cx| {
-			window.draw(cx).clear();
+			window.draw(cx).clear(cx);
 		})
 		.expect("window is still open");
 	}
 
 	/// The new-project dialog: the name field round-trips and the format
 	/// rows follow the shared preset / custom behavior.
-	#[gpui::test]
-	async fn new_project_dialog_edits_and_renders(cx: &mut gpui::TestAppContext) {
-		cx.update(|cx| cx.init_colors());
+	#[gpui_kit::test]
+	async fn new_project_dialog_edits_and_renders(cx: &mut gpui_kit::TestAppContext) {
+		cx.update(|cx| {
+			gpui_kit::init(cx);
+			cx.init_colors();
+		});
 		let window = cx.open_window(
-			gpui::size(gpui::px(520.0), gpui::px(560.0)),
+			gpui_kit::size(gpui_kit::px(520.0), gpui_kit::px(560.0)),
 			NewProjectContent::new,
 		);
 		cx.run_until_parked();
@@ -6326,18 +6449,21 @@ mod tests {
 				rate: FrameRate::new(25, 1),
 			}
 		);
-		cx.update(|cx| {
+		cx.update_window(window.clone().into(), |_, window, cx| {
 			content.update(cx, |content, cx| {
-				content.name.update(cx, |name, cx| name.set_value("My Project", cx))
-			})
-		});
+				content
+					.name
+					.update(cx, |name, cx| name.set_value("My Project", window, cx))
+			});
+		})
+		.expect("window open");
 		assert_eq!(
 			cx.read(|cx| content.read(cx).name(cx)).as_ref(),
 			"My Project"
 		);
 
 		cx.update_window(window.into(), |_root, window, cx| {
-			window.draw(cx).clear();
+			window.draw(cx).clear(cx);
 		})
 		.expect("window is still open");
 	}
@@ -6346,11 +6472,14 @@ mod tests {
 	/// The export dialog's sequence picker: the host populates it from
 	/// the project, a known preselection wins, an unknown one falls back
 	/// to the first entry, and an empty project leaves nothing to export.
-	#[gpui::test]
-	async fn export_dialog_sequence_picker(cx: &mut gpui::TestAppContext) {
-		cx.update(|cx| cx.init_colors());
+	#[gpui_kit::test]
+	async fn export_dialog_sequence_picker(cx: &mut gpui_kit::TestAppContext) {
+		cx.update(|cx| {
+			gpui_kit::init(cx);
+			cx.init_colors();
+		});
 		let window = cx.open_window(
-			gpui::size(gpui::px(440.0), gpui::px(400.0)),
+			gpui_kit::size(gpui_kit::px(440.0), gpui_kit::px(400.0)),
 			ExportDialogContent::new,
 		);
 		cx.run_until_parked();
@@ -6506,7 +6635,7 @@ mod tests {
 			CaptureDecision::Assign(canon) => {
 				assert_eq!(
 					canon,
-					gpui::Keystroke::parse("secondary-s").unwrap().unparse()
+					gpui_kit::Keystroke::parse("secondary-s").unwrap().unparse()
 				);
 			}
 			other => panic!("expected assign, got {other:?}"),
@@ -6594,8 +6723,8 @@ mod tests {
 	/// The keyboard tab: capture ignore / cancel / clear / assign (with the
 	/// conflict steal), reset selected / all, and the import / export file
 	/// round trips (including the cancel and failure paths).
-	#[gpui::test]
-	async fn keyboard_tab_capture_reset_and_file_round_trip(cx: &mut gpui::TestAppContext) {
+	#[gpui_kit::test]
+	async fn keyboard_tab_capture_reset_and_file_round_trip(cx: &mut gpui_kit::TestAppContext) {
 		// Lock order: shortcuts → language → config (the same nesting the
 		// other app test modules use, so parallel tests cannot deadlock).
 		let _guard = crate::actions::shortcuts_test_lock()
@@ -6618,9 +6747,12 @@ mod tests {
 		let _env = ConfigDirRestore(std::env::var_os("OAK_CONFIG_DIR"));
 		unsafe { std::env::set_var("OAK_CONFIG_DIR", &config_dir) };
 
-		cx.update(|cx| cx.init_colors());
+		cx.update(|cx| {
+			gpui_kit::init(cx);
+			cx.init_colors();
+		});
 		let window = cx.open_window(
-			gpui::size(gpui::px(700.0), gpui::px(600.0)),
+			gpui_kit::size(gpui_kit::px(700.0), gpui_kit::px(600.0)),
 			KeyboardTabContent::new,
 		);
 		cx.run_until_parked();
@@ -6664,7 +6796,7 @@ mod tests {
 		assert!(cx.read(|cx| content.read(cx).status.is_some()));
 		// The unbound row renders its "No shortcut"-style placeholder.
 		cx.update_window(window.into(), |_root, window, cx| {
-			window.draw(cx).clear();
+			window.draw(cx).clear(cx);
 		})
 		.expect("window is still open");
 
@@ -6807,36 +6939,34 @@ mod tests {
 		);
 
 		// The search field's subscription updates the filter and clears the
-		// selection; the render then only lists matching rows.
-		cx.update(|cx| {
-			content.update(cx, |tab, cx| {
-				tab.selected = Some(0);
-				tab.query.update(cx, |query, cx| query.emplace("save", cx));
-			})
-		});
+		// selection; the render then only lists matching rows. Type for
+		// real: the Change event is what drives the filter.
+		cx.update_window(window.clone().into(), |_, window, cx| {
+			content.update(cx, |tab, cx| tab.selected = Some(0));
+			let focus = content.read(cx).query.read(cx).focus_handle(cx);
+			window.focus(&focus, cx);
+		})
+		.expect("window open");
+		cx.simulate_input(window.clone().into(), "save");
 		assert_eq!(cx.read(|cx| content.read(cx).filter.clone()), "save");
 		assert!(cx.read(|cx| content.read(cx).selected.is_none()));
 		cx.update_window(window.into(), |_root, window, cx| {
-			window.draw(cx).clear();
+			window.draw(cx).clear(cx);
 		})
 		.expect("window is still open");
-		cx.update(|cx| {
-			content.update(cx, |tab, cx| {
-				tab.query.update(cx, |query, cx| query.emplace("", cx))
-			})
-		});
+		cx.simulate_keystrokes(window.clone().into(), "ctrl-a backspace");
 
 		// The rendered tab: clicking a capture field starts a capture, and
 		// the armed reset-all confirmation footer renders.
 		crate::actions::reset_all_custom_shortcuts();
-		let mut visual = gpui::VisualTestContext::from_window(window.into(), cx);
+		let mut visual = gpui_kit::VisualTestContext::from_window(window.into(), cx);
 		visual.update(|window, cx| {
-			window.draw(cx).clear();
+			window.draw(cx).clear(cx);
 		});
 		let capture0 = visual
 			.debug_bounds("keyboard-capture-0")
 			.expect("the first capture field is painted");
-		visual.simulate_click(capture0.center(), gpui::Modifiers::none());
+		visual.simulate_click(capture0.center(), gpui_kit::Modifiers::none());
 		assert_eq!(visual.read(|cx| content.read(cx).capturing), Some(0));
 		visual.update(|_window, cx| {
 			content.update(cx, |tab, _cx| {
@@ -6844,7 +6974,7 @@ mod tests {
 			})
 		});
 		visual.update(|window, cx| {
-			window.draw(cx).clear();
+			window.draw(cx).clear(cx);
 		});
 
 		crate::actions::reset_all_custom_shortcuts();
@@ -6855,8 +6985,8 @@ mod tests {
 	/// Action search: live filtering (with its empty result case), arrow /
 	/// enter key handling through the interceptor, execution events and the
 	/// list rendering.
-	#[gpui::test]
-	async fn action_search_filters_navigates_and_executes(cx: &mut gpui::TestAppContext) {
+	#[gpui_kit::test]
+	async fn action_search_filters_navigates_and_executes(cx: &mut gpui_kit::TestAppContext) {
 		let _guard = crate::actions::shortcuts_test_lock()
 			.lock()
 			.unwrap_or_else(|e| e.into_inner());
@@ -6866,9 +6996,12 @@ mod tests {
 		let previous_language = crate::i18n::language_code();
 		crate::i18n::set_language_code("en-US");
 
-		cx.update(|cx| cx.init_colors());
+		cx.update(|cx| {
+			gpui_kit::init(cx);
+			cx.init_colors();
+		});
 		let window = cx.open_window(
-			gpui::size(gpui::px(600.0), gpui::px(500.0)),
+			gpui_kit::size(gpui_kit::px(600.0), gpui_kit::px(500.0)),
 			ActionSearchContent::new,
 		);
 		cx.run_until_parked();
@@ -6888,14 +7021,14 @@ mod tests {
 		let _focus = cx.read(|cx| content.read(cx).search_focus(cx));
 
 		// The search field filters and selects the first matching action.
+		// Type for real: the filter subscription runs on Change events.
 		let filter = i18n::tr(ActionId::NewProject.entry().i18n_key).to_lowercase();
-		cx.update(|cx| {
-			content.update(cx, |search, cx| {
-				search
-					.query
-					.update(cx, |query, cx| query.emplace(&filter, cx))
-			})
-		});
+		cx.update_window(window.clone().into(), |_, window, cx| {
+			let focus = content.read(cx).search_focus(cx);
+			window.focus(&focus, cx);
+		})
+		.expect("window open");
+		cx.simulate_input(window.clone().into(), &filter);
 		assert_eq!(cx.read(|cx| content.read(cx).filter().to_string()), filter);
 		let first_match = items
 			.iter()
@@ -6908,26 +7041,17 @@ mod tests {
 
 		// A query matching nothing clears the selection (the empty-list
 		// render branch).
-		cx.update(|cx| {
-			content.update(cx, |search, cx| {
-				search
-					.query
-					.update(cx, |query, cx| query.emplace("zzz-no-such-action-zzz", cx))
-			})
-		});
+		cx.simulate_keystrokes(window.clone().into(), "ctrl-a");
+		cx.simulate_input(window.clone().into(), "zzz-no-such-action-zzz");
 		assert!(cx.read(|cx| content.read(cx).selected_action()).is_none());
 		cx.update_window(window.into(), |_root, window, cx| {
-			window.draw(cx).clear();
+			window.draw(cx).clear(cx);
 		})
 		.expect("window is still open");
 
 		// Clearing the query re-selects the first row; arrow moves wrap
 		// through every item.
-		cx.update(|cx| {
-			content.update(cx, |search, cx| {
-				search.query.update(cx, |query, cx| query.emplace("", cx))
-			})
-		});
+		cx.simulate_keystrokes(window.clone().into(), "ctrl-a backspace");
 		assert_eq!(
 			cx.read(|cx| content.read(cx).selected_action()),
 			Some(items[0].0)
@@ -6952,7 +7076,10 @@ mod tests {
 				events.borrow_mut().push(*event);
 			})
 		});
-		cx.dispatch_keystroke(window.into(), keystroke("a"));
+		// A non-text key passes the interceptor through to the field
+		// (gpui-kit inserts printable keys as text, so a letter would
+		// change the filter; F1 is inert here).
+		cx.dispatch_keystroke(window.into(), keystroke("f1"));
 		cx.run_until_parked();
 		cx.dispatch_keystroke(window.into(), keystroke("down"));
 		cx.run_until_parked();
@@ -6984,7 +7111,7 @@ mod tests {
 
 		// The populated list renders.
 		cx.update_window(window.into(), |_root, window, cx| {
-			window.draw(cx).clear();
+			window.draw(cx).clear(cx);
 		})
 		.expect("window is still open");
 		// With no actions at all, the no-actions note renders.
@@ -6996,7 +7123,7 @@ mod tests {
 			})
 		});
 		cx.update_window(window.into(), |_root, window, cx| {
-			window.draw(cx).clear();
+			window.draw(cx).clear(cx);
 		})
 		.expect("window is still open");
 

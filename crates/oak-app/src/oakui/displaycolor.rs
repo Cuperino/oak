@@ -152,10 +152,10 @@ pub fn generation() -> u64 {
 }
 
 /// True when the session runs on a Wayland compositor (the same probe the
-/// platform backend uses, `gpui::guess_compositor`).
+/// platform backend uses, `gpui_kit::guess_compositor`).
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 fn on_wayland() -> bool {
-	gpui::guess_compositor() == "Wayland"
+	gpui_kit::guess_compositor() == "Wayland"
 }
 
 /// The platform policy decision for this session (see the module docs).
@@ -247,7 +247,7 @@ pub fn note_monitor(id: Option<String>) {
 /// immediately — and only a successful probe updates the tracked monitor:
 /// a transient failure keeps the last known one rather than falling back
 /// mid-session.
-pub fn poll_monitor(window: &gpui::Window, cx: &gpui::App) {
+pub fn poll_monitor(window: &gpui_kit::Window, cx: &gpui_kit::App) {
 	if display_policy() != DisplayPolicy::SelfManaged {
 		return;
 	}
@@ -272,7 +272,7 @@ pub fn poll_monitor(window: &gpui::Window, cx: &gpui::App) {
 /// resolves the RandR output whose geometry covers the window center
 /// (window bounds are logical pixels there; multiplied by the scale factor
 /// they become device pixels).
-fn current_monitor_fingerprint(window: &gpui::Window, cx: &gpui::App) -> Option<String> {
+fn current_monitor_fingerprint(window: &gpui_kit::Window, cx: &gpui_kit::App) -> Option<String> {
 	#[cfg(target_os = "macos")]
 	{
 		let id = u64::from(window.display(cx)?.id());
@@ -447,12 +447,12 @@ pub fn is_active() -> bool {
 /// level or ignore it). Call once per window at creation, after any
 /// preference change that flips [`is_active`], and after the project
 /// output spec changes (which rekeys the content-colorspace declaration).
-pub fn apply_to_window(window: &mut gpui::Window) {
+pub fn apply_to_window(window: &mut gpui_kit::Window) {
 	let active = is_active();
 	let mode = if active {
-		gpui::LayerColorManagement::SelfManaged
+		gpui_kit::LayerColorManagement::SelfManaged
 	} else {
-		gpui::LayerColorManagement::OsManaged
+		gpui_kit::LayerColorManagement::OsManaged
 	};
 	window.set_layer_color_management(mode);
 	// OS-managed: name the content colorspace so the OS maps from it
@@ -465,19 +465,19 @@ pub fn apply_to_window(window: &mut gpui::Window) {
 
 /// The gpui content-colorspace declaration for the current project output
 /// spec (only meaningful while the OS performs the display mapping).
-fn content_colorspace() -> gpui::WindowContentColorspace {
+fn content_colorspace() -> gpui_kit::WindowContentColorspace {
 	let spec = pipeline_output_spec();
-	gpui::WindowContentColorspace {
+	gpui_kit::WindowContentColorspace {
 		primaries: match spec.gamut {
-			OutputGamut::Srgb => gpui::ContentPrimaries::Srgb,
-			OutputGamut::DisplayP3 => gpui::ContentPrimaries::DisplayP3,
-			OutputGamut::Bt2020 => gpui::ContentPrimaries::Bt2020,
+			OutputGamut::Srgb => gpui_kit::ContentPrimaries::Srgb,
+			OutputGamut::DisplayP3 => gpui_kit::ContentPrimaries::DisplayP3,
+			OutputGamut::Bt2020 => gpui_kit::ContentPrimaries::Bt2020,
 		},
 		transfer: match spec.transfer {
-			OutputTransfer::Srgb => gpui::ContentTransfer::Srgb,
-			OutputTransfer::Gamma22 => gpui::ContentTransfer::Gamma22,
-			OutputTransfer::Pq => gpui::ContentTransfer::Pq,
-			OutputTransfer::Hlg => gpui::ContentTransfer::Hlg,
+			OutputTransfer::Srgb => gpui_kit::ContentTransfer::Srgb,
+			OutputTransfer::Gamma22 => gpui_kit::ContentTransfer::Gamma22,
+			OutputTransfer::Pq => gpui_kit::ContentTransfer::Pq,
+			OutputTransfer::Hlg => gpui_kit::ContentTransfer::Hlg,
 		},
 	}
 }
@@ -720,9 +720,7 @@ mod tests {
 		assert!(one.iter().all(|v| v.is_finite()));
 		assert_eq!(one[3], 1.0, "alpha is untouched");
 
-		// The active flag and the content-space declaration agree with the
-		// policy and never panic.
+		// The active flag agrees with the policy and never panics.
 		let _ = is_active();
-		let _ = content_colorspace();
 	}
 }

@@ -22,7 +22,7 @@
 //! [`TransportState::is_playing`]). Keeping this free of gpui types is what
 //! makes the whole machine unit-testable with plain `#[test]`.
 
-use gpui::timeline::Frame;
+use crate::widgets::timeline::Frame;
 
 /// Whether the transport is rolling.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

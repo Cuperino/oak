@@ -17,7 +17,7 @@
 //! The inspector's OFX parameter view (stage 6b): auto-generated controls
 //! for the effect node's inputs.
 //!
-//! The [`EffectStackView`](gpui::effect_stack::EffectStackView) invokes a
+//! The [`EffectStackView`](crate::widgets::effect_stack::EffectStackView) invokes a
 //! params renderer inside each expanded effect card. For OFX plugin nodes
 //! this view reads the effect's parameter snapshot from the engine
 //! ([`AppEngine::effect_params`]) and renders one control per input:
@@ -52,17 +52,19 @@ use crate::oakui::component::controls::{CheckBox, CheckBoxEvent, CheckState};
 use crate::oakui::component::controls::{ComboBox, ComboBoxEvent, ComboBoxOption};
 use crate::oakui::component::controls::{Slider, SliderEvent, SliderModel, SliderValue, ValueKind};
 use crate::oakui::component::controls::{SpinBox, SpinBoxEvent};
-use gpui::colors::DefaultColors;
-use gpui::effect_stack::EffectId;
-use gpui::{
+use gpui_kit::colors::DefaultColors;
+use crate::widgets::theme::{accent_hover, neutral_hover};
+use crate::widgets::effect_stack::EffectId;
+use gpui_kit::{
 	anchored, canvas, deferred, fill, Anchor, App, Bounds, ElementId, Hsla, KeyDownEvent,
 	MouseButton, MouseDownEvent, MouseUpEvent, Pixels, Point, Rgba,
 };
-use gpui::{
+use gpui_kit::{
 	div, point, prelude::*, px, rgb, size, ClickEvent, Context, Entity, EventEmitter, Focusable,
 	Render, SharedString, Window,
 };
-use gpui_elements::editable_text::{EditableTextState, StringStorage};
+use gpui_kit::base::input::{InputEvent, InputState, TextareaState};
+use gpui_kit::component::input::Textarea;
 
 use oak_node::value::{NodeValue, ValueType};
 
@@ -84,6 +86,54 @@ struct ParamControl {
 	curve_domain: Option<(f64, f64, f64, f64)>,
 }
 
+/// A text parameter's editor state: gpui-kit types the single-line and
+/// multi-line input states separately, so the param keeps either.
+#[derive(Clone)]
+enum TextEditor {
+	/// Single-line field ([`InputState`]).
+	Line(Entity<InputState>),
+	/// Multi-line field ([`TextareaState`]).
+	Area(Entity<TextareaState>),
+}
+
+impl TextEditor {
+	/// The current text.
+	fn value(&self, cx: &App) -> String {
+		match self {
+			TextEditor::Line(e) => e.read(cx).value().to_string(),
+			TextEditor::Area(e) => e.read(cx).value().to_string(),
+		}
+	}
+
+	/// The field's focus handle (tests focus it before typing).
+	#[cfg(test)]
+	fn focus_handle(&self, cx: &App) -> gpui_kit::FocusHandle {
+		match self {
+			TextEditor::Line(e) => e.read(cx).focus_handle(cx),
+			TextEditor::Area(e) => e.read(cx).focus_handle(cx),
+		}
+	}
+
+	/// Whether the field is focused (a re-sync must not wipe an
+	/// in-progress edit).
+	fn is_focused(&self, window: &Window, cx: &App) -> bool {
+		match self {
+			TextEditor::Line(e) => e.read(cx).focus_handle(cx).is_focused(window),
+			TextEditor::Area(e) => e.read(cx).focus_handle(cx).is_focused(window),
+		}
+	}
+
+	/// Re-sync the field from the engine snapshot (never mid-edit; the
+	/// caller checks [`TextEditor::is_focused`]).
+	fn set_text(&self, text: &str, window: &mut Window, cx: &mut App) {
+		let text = text.to_string();
+		match self {
+			TextEditor::Line(e) => e.update(cx, |e, cx| e.set_value(text, window, cx)),
+			TextEditor::Area(e) => e.update(cx, |e, cx| e.set_value(text, window, cx)),
+		}
+	}
+}
+
 /// The concrete control(s) for one parameter.
 enum ControlKind {
 	/// A slider (int / float).
@@ -101,11 +151,14 @@ enum ControlKind {
 	/// carries the `("multiline", true)` property (the v3 text node's text
 	/// inputs; the inspector then builds a `text_area`).
 	Text {
-		editor: Entity<EditableTextState>,
+		editor: TextEditor,
+		/// Whether the field is multi-line (tests; render reads the
+		/// editor variant, which carries the same fact).
+		#[allow(dead_code)]
 		multiline: bool,
 	},
 	/// One curve editor per dimension (parametric parameter).
-	Curve(Vec<Entity<gpui_widgets::curve_editor::CurveEditor>>),
+	Curve(Vec<Entity<crate::widgets::curve_editor::CurveEditor>>),
 	/// A push button (rendered inline, no entity).
 	PushButton,
 	/// A read-only value line (no editable control; e.g. custom/binary).
@@ -231,15 +284,18 @@ impl<E: AppEngine> OfxParamsView<E> {
 					// in-progress text (the "cannot type into the text
 					// field" report). The field re-syncs on blur, and
 					// the row's explicit commit writes the edit back.
-					if editor.read(cx).focus_handle(cx).is_focused(window) {
+					if editor.is_focused(window, cx) {
 						continue;
 					}
+					// `set_value` lays out against a window, which render
+					// does not have — defer the write to after the frame
+					// (the update_window route works there).
 					let editor = editor.clone();
-					editor.update(cx, |editor, cx| {
-						if editor.as_str() != text {
-							editor.emplace(&text, cx);
-						}
-					});
+					if editor.value(cx) != text {
+						cx.defer_in(window, move |_, window, cx| {
+							editor.set_text(&text, window, cx)
+						});
+					}
 				}
 				ControlKind::Curve(editors) => {
 					// Re-seed from the engine's JSON mirror, but never
@@ -327,8 +383,8 @@ fn curve_point_to_editor(
 	p: &oak_ofx_plugin::param_curve::ControlPoint,
 	points: &[oak_ofx_plugin::param_curve::ControlPoint],
 	domain: (f64, f64, f64, f64),
-) -> gpui_widgets::curve_editor::CurvePoint {
-	use gpui_widgets::curve_editor::{CurvePoint, CurveVec2};
+) -> crate::widgets::curve_editor::CurvePoint {
+	use crate::widgets::curve_editor::{CurvePoint, CurveVec2};
 	let (lo, hi, vmin, vmax) = domain;
 	let (sx, sy) = (hi - lo, vmax - vmin);
 	let index = points.iter().position(|q| q.key == p.key).unwrap_or(0);
@@ -359,7 +415,7 @@ fn curve_point_to_editor(
 /// the bezier handles; points without handles get the centered-difference
 /// auto slope).
 fn curve_from_editor(
-	points: &[gpui_widgets::curve_editor::CurvePoint],
+	points: &[crate::widgets::curve_editor::CurvePoint],
 	domain: (f64, f64, f64, f64),
 ) -> oak_ofx_plugin::param_curve::Curve {
 	let (lo, hi, vmin, vmax) = domain;
@@ -432,10 +488,10 @@ fn curve_from_editor(
 /// Cheap curve equality for the per-render re-sync (epsilon on
 /// coordinates; handles compared too).
 fn curve_points_close(
-	a: &[gpui_widgets::curve_editor::CurvePoint],
-	b: &[gpui_widgets::curve_editor::CurvePoint],
+	a: &[crate::widgets::curve_editor::CurvePoint],
+	b: &[crate::widgets::curve_editor::CurvePoint],
 ) -> bool {
-	use gpui_widgets::curve_editor::CurveVec2;
+	use crate::widgets::curve_editor::CurveVec2;
 	let vec_close =
 		|a: &CurveVec2, b: &CurveVec2| (a.x - b.x).abs() < 1e-6 && (a.y - b.y).abs() < 1e-6;
 	let handle_close = |a: &Option<CurveVec2>, b: &Option<CurveVec2>| match (a, b) {
@@ -801,13 +857,22 @@ fn build_control<E: AppEngine>(
 				NodeValue::Text(s) => s.clone(),
 				_ => String::new(),
 			};
-			let editor = cx.new(|cx| EditableTextState::new(StringStorage::default(), cx));
-			editor.update(cx, |editor, cx| editor.emplace(&text, cx));
+			let multiline = is_multiline(param);
+			let editor = if multiline {
+				let state = cx.new(|cx| TextareaState::new(window, cx));
+				state.update(cx, |state, cx| {
+					state.set_value(text.clone(), window, cx)
+				});
+				TextEditor::Area(state)
+			} else {
+				let state = cx.new(|cx| InputState::new(window, cx));
+				state.update(cx, |state, cx| {
+					state.set_value(text.clone(), window, cx)
+				});
+				TextEditor::Line(state)
+			};
 			*next_id += 1;
-			ControlKind::Text {
-				editor,
-				multiline: is_multiline(param),
-			}
+			ControlKind::Text { editor, multiline }
 		}
 		ValueType::Vec2 | ValueType::Vec3 => {
 			let components = value_components(&param.value);
@@ -882,7 +947,7 @@ fn build_control<E: AppEngine>(
 					.map(|p| curve_point_to_editor(p, &curve.points, domain))
 					.collect::<Vec<_>>();
 				let editor = cx.new(|cx| {
-					gpui_widgets::curve_editor::CurveEditor::new(*next_id, points, window, cx)
+					crate::widgets::curve_editor::CurveEditor::new(*next_id, points, window, cx)
 				});
 				*next_id += 1;
 				editors.push(editor);
@@ -1072,8 +1137,8 @@ fn wire_controls<E: AppEngine>(view: &OfxParamsView<E>, cx: &mut Context<OfxPara
 					let engine = engine.clone();
 					cx.subscribe(
 						&editor,
-						move |_, _, event: &gpui_widgets::curve_editor::CurveEditorEvent, cx| {
-							use gpui_widgets::curve_editor::CurveEditorEvent as E;
+						move |_, _, event: &crate::widgets::curve_editor::CurveEditorEvent, cx| {
+							use crate::widgets::curve_editor::CurveEditorEvent as E;
 							match event {
 								E::PointMoved { .. }
 								| E::HandleMoved { .. }
@@ -1142,7 +1207,7 @@ impl<E: AppEngine> Render for OfxParamsView<E> {
 						div()
 							.py_1()
 							.text_xs()
-							.font_weight(gpui::FontWeight(600.0))
+							.font_weight(gpui_kit::FontWeight(600.0))
 							.text_color(colors.selected)
 							.child(title),
 					);
@@ -1152,7 +1217,7 @@ impl<E: AppEngine> Render for OfxParamsView<E> {
 			// A push button renders full-width with its own label (the OFX
 			// param label IS the button text); every other control gets the
 			// label column + control layout.
-			let row_element: gpui::AnyElement = if matches!(control.kind, ControlKind::PushButton) {
+			let row_element: gpui_kit::AnyElement = if matches!(control.kind, ControlKind::PushButton) {
 				let engine = self.engine.clone();
 				let effect = self.effect;
 				let input_id = control.input_id.clone();
@@ -1165,6 +1230,10 @@ impl<E: AppEngine> Render for OfxParamsView<E> {
 					.border_1()
 					.border_color(colors.border)
 					.bg(colors.selected)
+					.hover({
+						let hover = accent_hover(&colors);
+						move |style| style.bg(hover)
+					})
 					.text_sm()
 					.text_color(colors.text)
 					.text_center()
@@ -1205,36 +1274,23 @@ impl<E: AppEngine> Render for OfxParamsView<E> {
 					ControlKind::Color(picker) => {
 						div().flex_1().child(picker.clone()).into_any_element()
 					}
-					ControlKind::Text { editor, multiline } => {
-						let weak = editor.downgrade();
+					ControlKind::Text { editor, multiline: _ } => {
 						let engine = self.engine.clone();
 						let effect = self.effect;
 						let input_id = control.input_id.clone();
 						let editor_commit = editor.clone();
-						let field = if *multiline {
-							// A multi-line field. `text_input` above is
-							// single-line only (and keeps its theme colors
-							// to itself), so the element is built here with
-							// the same colors the component would use, in a
-							// fixed-height box the text scrolls inside.
-							gpui_elements::editable_text::text_area(format!(
-								"ofx-param-{}",
-								control.input_id
-							))
-							.state(weak)
-							.accepts_input(true)
-							.h(px(96.0))
-							.text_color(colors.text)
-							.placeholder_color(colors.disabled.into())
-							.selection_color(colors.selected.into())
-							.caret_color(colors.text.into())
-							.marked_color(colors.text.into())
-							.into_any_element()
-						} else {
-							text_input(format!("ofx-param-{}", control.input_id), cx)
-								.state(weak)
-								.accepts_input(true)
-								.into_any_element()
+						let field = match editor {
+							TextEditor::Line(state) => {
+								text_input(format!("ofx-param-{}", control.input_id), cx)
+									.state(state.downgrade())
+									.accepts_input(true)
+									.into_any_element()
+							}
+							TextEditor::Area(state) => div()
+								.h(px(96.0))
+								.text_color(colors.text)
+								.child(Textarea::new(state).h_full())
+								.into_any_element(),
 						};
 						div()
 							.flex_1()
@@ -1265,13 +1321,17 @@ impl<E: AppEngine> Render for OfxParamsView<E> {
 									.border_1()
 									.border_color(colors.border)
 									.bg(colors.selected)
+									.hover({
+										let hover = accent_hover(&colors);
+										move |style| style.bg(hover)
+									})
 									.text_sm()
 									.text_color(colors.text)
 									.px_2()
 									.py_1()
 									.child("✓")
 									.on_click(move |_event: &ClickEvent, _window, cx| {
-										let text = editor_commit.read(cx).as_str().to_string();
+										let text = editor_commit.value(cx);
 										engine.update(cx, |engine, cx| {
 											if let Err(err) = engine.set_effect_param(
 												effect,
@@ -1399,7 +1459,7 @@ pub struct OfxColorPicker {
 	/// The alpha slider (always 0..1).
 	a: Entity<Slider>,
 	/// The hex editor (`#RRGGBB` / `#RRGGBBAA`).
-	hex: Entity<EditableTextState>,
+	hex: Entity<InputState>,
 	/// Whether the viewer eyedropper is armed (a click on the program
 	/// viewer samples a pixel back into the draft).
 	picking: bool,
@@ -1442,12 +1502,26 @@ impl OfxColorPicker {
 			c1: Self::channel_slider(cx, window, 1, 0.0, 1.0, 0.01, color.g as f64),
 			c2: Self::channel_slider(cx, window, 2, 0.0, 1.0, 0.01, color.b as f64),
 			a: Self::channel_slider(cx, window, 3, 0.0, 1.0, 0.01, color.a as f64),
-			hex: cx.new(|cx| EditableTextState::new(StringStorage::default(), cx)),
+			hex: cx.new(|cx| InputState::new(window, cx)),
 			picking: false,
 			swallow_next_outside_up: false,
 		};
 		let hex_text = format_hex(color);
-		picker.hex.update(cx, |hex, cx| hex.emplace(&hex_text, cx));
+		picker.hex.update(cx, |hex, cx| {
+			hex.set_value(&hex_text, window, cx)
+		});
+		// Live-parse hand-typed hex edits into the draft, so the draft is
+		// always authoritative at commit time (programmatic `set_value`
+		// refreshes don't emit `Change`, so only user typing lands here).
+		cx.subscribe(
+			&picker.hex,
+			|this: &mut Self, _state: Entity<InputState>, event: &InputEvent, cx| {
+				if matches!(event, InputEvent::Change) {
+					this.on_hex_edited(cx);
+				}
+			},
+		)
+		.detach();
 		picker
 	}
 
@@ -1531,11 +1605,9 @@ impl OfxColorPicker {
 		self.hex_error = false;
 		let hex_entity = self.hex.clone();
 		let hex_text = format_hex(self.draft);
-		hex_entity.update(cx, |hex, cx| {
-			if hex.as_str() != hex_text {
-				hex.emplace(&hex_text, cx);
-			}
-		});
+		if hex_entity.read(cx).value() != hex_text.as_str() {
+			crate::oakui::component::text_input::set_input_text(&hex_entity, &hex_text, cx);
+		}
 		cx.notify();
 	}
 
@@ -1555,10 +1627,10 @@ impl OfxColorPicker {
 		self.apply_draft_rgb(rgb.r, rgb.g, rgb.b, cx);
 	}
 
-	/// Re-sync the sliders and the hex field from the current draft (no
-	/// events emitted; used when the draft is reset or committed). In HSV
-	/// mode the primary sliders show the hue/saturation/value of the draft.
-	fn sync_from_draft(&self, cx: &mut Context<Self>) {
+	/// Re-sync the four channel sliders from the current draft (no events
+	/// emitted). In HSV mode the primary sliders show the
+	/// hue/saturation/value of the draft.
+	fn sync_sliders(&self, cx: &mut Context<Self>) {
 		let (a, b, c) = match self.mode {
 			ColorMode::Rgb => (self.draft.r, self.draft.g, self.draft.b),
 			ColorMode::Hsv => {
@@ -1574,13 +1646,50 @@ impl OfxColorPicker {
 				slider.set_value(SliderValue::Float(*value));
 			});
 		}
+	}
+
+	/// Re-sync the sliders and the hex field from the current draft (no
+	/// events emitted; used when the draft is reset or committed).
+	fn sync_from_draft(&self, cx: &mut Context<Self>) {
+		self.sync_sliders(cx);
 		let hex_entity = self.hex.clone();
 		let hex_text = format_hex(self.draft);
-		hex_entity.update(cx, |hex, cx| {
-			if hex.as_str() != hex_text {
-				hex.emplace(&hex_text, cx);
+		if hex_entity.read(cx).value() != hex_text.as_str() {
+			crate::oakui::component::text_input::set_input_text(&hex_entity, &hex_text, cx);
+		}
+	}
+
+	/// Live-parse a hand-typed hex edit into the draft (subscribed to the
+	/// field's `InputEvent::Change`, which only fires for user edits —
+	/// programmatic `set_value` refreshes don't loop back in here). This
+	/// keeps the draft authoritative at commit time even if a programmatic
+	/// hex refresh could not land (e.g. mid-render).
+	fn on_hex_edited(&mut self, cx: &mut Context<Self>) {
+		let text = self.hex.read(cx).value().trim().to_string();
+		if text.is_empty() {
+			// An emptied field is "not editing": commit falls back to the
+			// draft as-is.
+			self.hex_error = false;
+			cx.notify();
+			return;
+		}
+		match parse_hex(&text) {
+			Some(color) => {
+				self.hex_error = false;
+				if color != self.draft {
+					self.draft = color;
+					// Follow the typed colour on the sliders; the hex
+					// field itself is left alone (the user is typing in
+					// it).
+					self.sync_sliders(cx);
+				}
+				cx.notify();
 			}
-		});
+			None => {
+				self.hex_error = true;
+				cx.notify();
+			}
+		}
 	}
 
 	/// Switch the primary sliders between RGB and HSV editing. The draft is
@@ -1703,25 +1812,21 @@ impl OfxColorPicker {
 		}
 	}
 
-	/// OK: validate a hand-typed hex edit, then commit the draft. Also
-	/// disarms a viewer eyedropper that was left armed.
+	/// OK: commit the draft. Hand-typed hex edits are live-parsed into the
+	/// draft by [`Self::on_hex_edited`], so the draft is authoritative here
+	/// (reading the field back would resurrect a stale text whenever a
+	/// programmatic refresh could not land); an in-progress invalid hex
+	/// edit keeps the popup open and commits nothing. Also disarms a
+	/// viewer eyedropper that was left armed.
 	fn commit(&mut self, cx: &mut Context<Self>) {
 		if self.picking {
 			self.picking = false;
 			cx.emit(OfxColorEvent::PickViewerToggle { armed: false });
 		}
-		let text = self.hex.read(cx).as_str().trim().to_string();
-		if !text.is_empty() {
-			match parse_hex(&text) {
-				Some(color) => self.draft = color,
-				None => {
-					self.hex_error = true;
-					cx.notify();
-					return;
-				}
-			}
+		if self.hex_error {
+			cx.notify();
+			return;
 		}
-		self.hex_error = false;
 		let color = self.draft;
 		self.open = false;
 		self.committed = color;
@@ -1734,8 +1839,8 @@ impl OfxColorPicker {
 	fn popup_anchored(
 		&self,
 		cx: &mut Context<Self>,
-		colors: &Arc<gpui::colors::Colors>,
-	) -> gpui::Deferred {
+		colors: &Arc<gpui_kit::colors::Colors>,
+	) -> gpui_kit::Deferred {
 		let control = self.control;
 		let draft = self.draft;
 		let hex_weak = self.hex.downgrade();
@@ -1744,6 +1849,11 @@ impl OfxColorPicker {
 
 		// RGB / HSV mode tabs.
 		let tab = |this_mode: ColorMode| {
+			let hover_bg = if mode == this_mode {
+				accent_hover(&colors)
+			} else {
+				neutral_hover(&colors)
+			};
 			div()
 				.id(SharedString::from(format!(
 					"ofx-color-mode-{control}-{}",
@@ -1773,6 +1883,7 @@ impl OfxColorPicker {
 				} else {
 					colors.background
 				})
+				.hover(move |style| style.bg(hover_bg))
 				.text_sm()
 				.text_color(colors.text)
 				.flex()
@@ -1798,7 +1909,7 @@ impl OfxColorPicker {
 		// bounds each frame (an invisible canvas) so a click / drag can map
 		// the cursor to a value.
 		let sv_bounds =
-			std::sync::Arc::new(std::sync::RwLock::new(None::<gpui::Bounds<gpui::Pixels>>));
+			std::sync::Arc::new(std::sync::RwLock::new(None::<gpui_kit::Bounds<gpui_kit::Pixels>>));
 		let sv_drag = std::sync::Arc::new(std::sync::RwLock::new(SvPaletteDrag));
 		let (hue, _, _) = rgb_to_hsv(draft.r, draft.g, draft.b);
 		let record_sv = sv_bounds.clone();
@@ -1819,6 +1930,7 @@ impl OfxColorPicker {
 			.rounded_md()
 			.border_1()
 			.border_color(colors.border)
+			.hover(|style| style.border_color(colors.selected))
 			.overflow_hidden()
 			.cursor_pointer()
 			.on_mouse_down(MouseButton::Left, {
@@ -1838,7 +1950,7 @@ impl OfxColorPicker {
 				let sv_bounds = sv_bounds.clone();
 				cx.listener(
 					move |this,
-					      event: &gpui::DragMoveEvent<
+					      event: &gpui_kit::DragMoveEvent<
 						std::sync::Arc<std::sync::RwLock<SvPaletteDrag>>,
 					>,
 					      _window,
@@ -1853,7 +1965,7 @@ impl OfxColorPicker {
 			})
 			.child(sv_canvas);
 		let hue_bounds =
-			std::sync::Arc::new(std::sync::RwLock::new(None::<gpui::Bounds<gpui::Pixels>>));
+			std::sync::Arc::new(std::sync::RwLock::new(None::<gpui_kit::Bounds<gpui_kit::Pixels>>));
 		let hue_drag = std::sync::Arc::new(std::sync::RwLock::new(HueBarDrag));
 		let record_hue = hue_bounds.clone();
 		let hue_canvas = canvas(
@@ -1873,6 +1985,7 @@ impl OfxColorPicker {
 			.rounded_md()
 			.border_1()
 			.border_color(colors.border)
+			.hover(|style| style.border_color(colors.selected))
 			.overflow_hidden()
 			.cursor_pointer()
 			.on_mouse_down(MouseButton::Left, {
@@ -1891,7 +2004,7 @@ impl OfxColorPicker {
 				let hue_bounds = hue_bounds.clone();
 				cx.listener(
 					move |this,
-					      event: &gpui::DragMoveEvent<
+					      event: &gpui_kit::DragMoveEvent<
 						std::sync::Arc<std::sync::RwLock<HueBarDrag>>,
 					>,
 					      _window,
@@ -1966,7 +2079,7 @@ impl OfxColorPicker {
 		let error_hint = if hex_error {
 			div()
 				.text_xs()
-				.text_color(gpui::rgba(0xff5555))
+				.text_color(gpui_kit::rgba(0xff5555))
 				.child(crate::i18n::tr("ofx.color.invalid"))
 				.into_any_element()
 		} else {
@@ -1976,11 +2089,13 @@ impl OfxColorPicker {
 		// Cancel / OK.
 		let cancel = div()
 			.id(SharedString::from(format!("ofx-color-cancel-{control}")))
+			.debug_selector(move || format!("ofx-color-cancel-{control}"))
 			.cursor_pointer()
 			.rounded_sm()
 			.border_1()
 			.border_color(colors.border)
 			.bg(colors.background)
+			.hover(|style| style.bg(neutral_hover(&colors)))
 			.text_sm()
 			.text_color(colors.text)
 			.px_2()
@@ -1991,11 +2106,13 @@ impl OfxColorPicker {
 			}));
 		let ok = div()
 			.id(SharedString::from(format!("ofx-color-ok-{control}")))
+			.debug_selector(move || format!("ofx-color-ok-{control}"))
 			.cursor_pointer()
 			.rounded_sm()
 			.border_1()
 			.border_color(colors.border)
 			.bg(colors.selected)
+			.hover(|style| style.bg(accent_hover(&colors)))
 			.text_sm()
 			.text_color(colors.text)
 			.px_2()
@@ -2027,6 +2144,13 @@ impl OfxColorPicker {
 			} else {
 				colors.background
 			})
+			.hover(|style| {
+				if self.picking {
+					style.bg(accent_hover(&colors))
+				} else {
+					style.bg(neutral_hover(&colors))
+				}
+			})
 			.text_sm()
 			.text_color(colors.text)
 			.px_2()
@@ -2044,6 +2168,7 @@ impl OfxColorPicker {
 				.snap_to_window_with_margin(px(8.0))
 				.child(
 					div()
+						.id(SharedString::from(format!("ofx-color-popup-{control}")))
 						.w(px(300.0))
 						.p_2()
 						.rounded_lg()
@@ -2054,6 +2179,11 @@ impl OfxColorPicker {
 						.flex_col()
 						.gap_1()
 						.debug_selector(|| "ofx-color-popup".into())
+						// The popup floats above the params card it opened
+						// from: block mouse events from reaching the
+						// covered controls underneath (a click on the
+						// popup's padding must not press the card below).
+						.occlude()
 						.on_mouse_up_out(
 							MouseButton::Left,
 							cx.listener(|this, _event: &MouseUpEvent, _window, cx| {
@@ -2121,6 +2251,7 @@ impl Render for OfxColorPicker {
 			.cursor_pointer()
 			.overflow_hidden()
 			.debug_selector(|| "ofx-color-swatch".into())
+			.hover(|style| style.border_color(colors.selected))
 			.on_mouse_down(
 				MouseButton::Left,
 				cx.listener(|this, _event: &MouseDownEvent, _window, _cx| {
@@ -2227,7 +2358,7 @@ struct SvPaletteDrag;
 struct SvPaletteDragGhost;
 
 impl Render for SvPaletteDragGhost {
-	fn render(&mut self, _window: &mut Window, _cx: &mut gpui::Context<Self>) -> impl IntoElement {
+	fn render(&mut self, _window: &mut Window, _cx: &mut gpui_kit::Context<Self>) -> impl IntoElement {
 		div()
 	}
 }
@@ -2239,7 +2370,7 @@ struct HueBarDrag;
 struct HueBarDragGhost;
 
 impl Render for HueBarDragGhost {
-	fn render(&mut self, _window: &mut Window, _cx: &mut gpui::Context<Self>) -> impl IntoElement {
+	fn render(&mut self, _window: &mut Window, _cx: &mut gpui_kit::Context<Self>) -> impl IntoElement {
 		div()
 	}
 }
@@ -2373,7 +2504,7 @@ fn paint_hue_bar(bounds: Bounds<Pixels>, window: &mut Window, _cx: &mut App) {
 #[cfg(test)]
 mod tests {
 	use super::*;
-	use gpui::{Modifiers, Subscription, TestAppContext};
+	use gpui_kit::{Modifiers, Subscription, TestAppContext};
 	use std::sync::Mutex;
 
 	#[test]
@@ -2433,7 +2564,43 @@ mod tests {
 
 	/// The colour picker (and its four sliders + hex editor) constructs
 	/// without panicking and paints a swatch.
-	#[gpui::test]
+	/// Regression: a palette click inside window event dispatch must land
+	/// on commit. The draft updates immediately; the hex field refresh is
+	/// deferred past the dispatch (the window is borrowed), and OK must
+	/// commit the draft — not resurrect the stale hex text.
+	#[gpui_kit::test]
+	async fn color_picker_palette_click_commits(cx: &mut TestAppContext) {
+		let (window, picker, events) = open_picker(
+			cx,
+			Rgba { r: 0.4, g: 0.2, b: 0.8, a: 0.5 },
+		);
+		let visual = gpui_kit::VisualTestContext::from_window(window.into(), cx).into_mut();
+		visual.update(|window, cx| { window.draw(cx).clear(cx); });
+		let swatch = visual.debug_bounds("ofx-color-swatch").expect("swatch");
+		visual.simulate_click(swatch.center(), Modifiers::default());
+		visual.update(|window, cx| { window.draw(cx).clear(cx); });
+		let palette = visual.debug_bounds("ofx-color-sv-palette").expect("palette");
+		visual.simulate_click(palette.center(), Modifiers::default());
+		cx.run_until_parked();
+
+		let draft = visual.read(|cx| picker.read(cx).draft);
+		assert_ne!(draft.r, 0.4, "the palette click moves the draft");
+		// The deferred refresh updates the hex field to match the draft.
+		let hex_text = visual.read(|cx| picker.read(cx).hex.read(cx).value().to_string());
+		assert_eq!(hex_text, format_hex(draft), "the hex field follows the draft");
+
+		visual.update(|window, cx| { window.draw(cx).clear(cx); });
+		let ok = visual.debug_bounds("ofx-color-ok-1").expect("ok button");
+		visual.simulate_click(ok.center(), Modifiers::default());
+		cx.run_until_parked();
+		let committed = visual.read(|cx| picker.read(cx).committed);
+		assert_eq!(committed, draft, "OK commits the palette-picked draft");
+		assert!(picker_events(&events)
+			.iter()
+			.any(|e| matches!(e, OfxColorEvent::Committed(c) if *c == draft)));
+	}
+
+#[gpui_kit::test]
 	async fn color_picker_constructs_without_panicking(cx: &mut TestAppContext) {
 		struct Host {
 			picker: Entity<OfxColorPicker>,
@@ -2448,7 +2615,10 @@ mod tests {
 			}
 		}
 
-		cx.update(|cx| cx.init_colors());
+		cx.update(|cx| {
+			gpui_kit::init(cx);
+			cx.init_colors();
+		});
 		let window = cx.open_window(size(px(320.0), px(200.0)), |window, cx| {
 			let picker = cx.new(|cx| {
 				OfxColorPicker::new(
@@ -2467,9 +2637,9 @@ mod tests {
 		});
 		cx.run_until_parked();
 
-		let visual = gpui::VisualTestContext::from_window(window.into(), cx).into_mut();
+		let visual = gpui_kit::VisualTestContext::from_window(window.into(), cx).into_mut();
 		visual.update(|window, cx| {
-			window.draw(cx).clear();
+			window.draw(cx).clear(cx);
 		});
 		assert!(
 			visual.debug_bounds("ofx-color-swatch").is_some(),
@@ -2485,9 +2655,12 @@ mod tests {
 	/// palette centre maps to v ≈ 0 (black) instead of v ≈ 0.5: the popup
 	/// opens but shows/behaves as an empty box (the reported "色板没显示
 	/// 出来").
-	#[gpui::test]
+	#[gpui_kit::test]
 	async fn palette_click_maps_center_to_mid_saturation_value(cx: &mut TestAppContext) {
-		cx.update(|cx| cx.init_colors());
+		cx.update(|cx| {
+			gpui_kit::init(cx);
+			cx.init_colors();
+		});
 		let window = cx.open_window(size(px(320.0), px(560.0)), |window, cx| {
 			OfxColorPicker::new(
 				1,
@@ -2503,9 +2676,9 @@ mod tests {
 		});
 		cx.run_until_parked();
 
-		let visual = gpui::VisualTestContext::from_window(window.into(), cx).into_mut();
+		let visual = gpui_kit::VisualTestContext::from_window(window.into(), cx).into_mut();
 		visual.update(|window, cx| {
-			window.draw(cx).clear();
+			window.draw(cx).clear(cx);
 		});
 
 		// Open the popup by clicking the swatch, then re-draw so the popup's
@@ -2520,7 +2693,7 @@ mod tests {
 		);
 		visual.simulate_click(swatch_center, Modifiers::default());
 		visual.update(|window, cx| {
-			window.draw(cx).clear();
+			window.draw(cx).clear(cx);
 		});
 
 		// Click the centre of the SV palette.
@@ -2556,7 +2729,7 @@ mod tests {
 
 	/// The "pick from viewer" button toggles the eyedropper and emits
 	/// `PickViewerToggle` events that the params view routes to the engine.
-	#[gpui::test]
+	#[gpui_kit::test]
 	async fn pick_viewer_button_toggles_armed(cx: &mut TestAppContext) {
 		struct Host {
 			picker: Entity<OfxColorPicker>,
@@ -2573,7 +2746,10 @@ mod tests {
 			}
 		}
 
-		cx.update(|cx| cx.init_colors());
+		cx.update(|cx| {
+			gpui_kit::init(cx);
+			cx.init_colors();
+		});
 		let window = cx.open_window(size(px(320.0), px(560.0)), |window, cx| {
 			let picker = cx.new(|cx| {
 				OfxColorPicker::new(
@@ -2604,9 +2780,9 @@ mod tests {
 		});
 		cx.run_until_parked();
 
-		let visual = gpui::VisualTestContext::from_window(window.into(), cx).into_mut();
+		let visual = gpui_kit::VisualTestContext::from_window(window.into(), cx).into_mut();
 		visual.update(|window, cx| {
-			window.draw(cx).clear();
+			window.draw(cx).clear(cx);
 		});
 
 		// Open the popup by clicking the swatch, then re-draw so the popup's
@@ -2620,7 +2796,7 @@ mod tests {
 		);
 		visual.simulate_click(swatch_center, Modifiers::default());
 		visual.update(|window, cx| {
-			window.draw(cx).clear();
+			window.draw(cx).clear(cx);
 		});
 
 		// Clicking "pick from viewer" arms the eyedropper...
@@ -2661,7 +2837,7 @@ mod tests {
 	/// it (no `Cancelled` emitted, the arm state kept), or the sampled colour
 	/// would be dropped by `apply_viewer_pick`'s `picking` guard. Once the
 	/// eyedropper is disarmed, an outside click dismisses as usual.
-	#[gpui::test]
+	#[gpui_kit::test]
 	async fn outside_click_while_picking_keeps_popup_open(cx: &mut TestAppContext) {
 		struct Host {
 			picker: Entity<OfxColorPicker>,
@@ -2678,7 +2854,10 @@ mod tests {
 			}
 		}
 
-		cx.update(|cx| cx.init_colors());
+		cx.update(|cx| {
+			gpui_kit::init(cx);
+			cx.init_colors();
+		});
 		let window = cx.open_window(size(px(320.0), px(560.0)), |window, cx| {
 			let picker = cx.new(|cx| {
 				OfxColorPicker::new(
@@ -2709,9 +2888,9 @@ mod tests {
 		});
 		cx.run_until_parked();
 
-		let visual = gpui::VisualTestContext::from_window(window.into(), cx).into_mut();
+		let visual = gpui_kit::VisualTestContext::from_window(window.into(), cx).into_mut();
 		visual.update(|window, cx| {
-			window.draw(cx).clear();
+			window.draw(cx).clear(cx);
 		});
 
 		// Open the popup by clicking the swatch, then re-draw so the popup's
@@ -2725,7 +2904,7 @@ mod tests {
 		);
 		visual.simulate_click(swatch_center, Modifiers::default());
 		visual.update(|window, cx| {
-			window.draw(cx).clear();
+			window.draw(cx).clear(cx);
 		});
 
 		// Arm the eyedropper.
@@ -2794,9 +2973,12 @@ mod tests {
 
 	/// Applying a viewer pick lands the sampled colour in the draft and
 	/// disarms the eyedropper.
-	#[gpui::test]
+	#[gpui_kit::test]
 	async fn apply_viewer_pick_updates_draft(cx: &mut TestAppContext) {
-		cx.update(|cx| cx.init_colors());
+		cx.update(|cx| {
+			gpui_kit::init(cx);
+			cx.init_colors();
+		});
 		let window = cx.open_window(size(px(320.0), px(200.0)), |window, cx| {
 			OfxColorPicker::new(
 				1,
@@ -2840,7 +3022,7 @@ mod tests {
 	/// `picking` already false — without the one-shot swallow it reads as
 	/// an outside click, closes the popup and discards the picked colour
 	/// (the user can never press OK).
-	#[gpui::test]
+	#[gpui_kit::test]
 	async fn pick_click_mouse_up_does_not_dismiss_popup(cx: &mut TestAppContext) {
 		struct Host {
 			picker: Entity<OfxColorPicker>,
@@ -2857,7 +3039,10 @@ mod tests {
 			}
 		}
 
-		cx.update(|cx| cx.init_colors());
+		cx.update(|cx| {
+			gpui_kit::init(cx);
+			cx.init_colors();
+		});
 		let window = cx.open_window(size(px(320.0), px(560.0)), |window, cx| {
 			let picker = cx.new(|cx| {
 				OfxColorPicker::new(
@@ -2888,9 +3073,9 @@ mod tests {
 		});
 		cx.run_until_parked();
 
-		let visual = gpui::VisualTestContext::from_window(window.into(), cx).into_mut();
+		let visual = gpui_kit::VisualTestContext::from_window(window.into(), cx).into_mut();
 		visual.update(|window, cx| {
-			window.draw(cx).clear();
+			window.draw(cx).clear(cx);
 		});
 
 		// Open the popup, re-draw for the deferred layer, arm the eyedropper.
@@ -2905,7 +3090,7 @@ mod tests {
 			Modifiers::default(),
 		);
 		visual.update(|window, cx| {
-			window.draw(cx).clear();
+			window.draw(cx).clear(cx);
 		});
 		let button = visual
 			.debug_bounds("ofx-color-pick-viewer-1")
@@ -3117,7 +3302,7 @@ mod tests {
 	/// engine snapshot would wipe the in-progress text (the "cannot type
 	/// into the text field" report). On blur the field re-syncs to the
 	/// engine value.
-	#[gpui::test]
+	#[gpui_kit::test]
 	async fn text_field_keeps_in_progress_edits_while_focused(cx: &mut TestAppContext) {
 		use crate::oakui::mock::MockEngine;
 		struct Host {
@@ -3132,7 +3317,10 @@ mod tests {
 				div().size_full().child(self.view.clone())
 			}
 		}
-		cx.update(|cx| cx.init_colors());
+		cx.update(|cx| {
+			gpui_kit::init(cx);
+			cx.init_colors();
+		});
 		let window = cx.open_window(size(px(400.0), px(200.0)), |window, cx| {
 			let engine = cx.new(MockEngine::create);
 			let view =
@@ -3156,7 +3344,7 @@ mod tests {
 				.expect("the plain_text_in control")
 		});
 		assert_eq!(
-			cx.read(|cx| editor.read(cx).as_str().to_string()),
+			cx.read(|cx| editor.value(cx)),
 			"文本\nsecond line"
 		);
 
@@ -3164,13 +3352,14 @@ mod tests {
 		// engine-notify re-sync (the tick-rate repaint).
 		window
 			.update(cx, |_root, window, cx| {
-				let handle = editor.read(cx).focus_handle(cx);
+				let handle = editor.focus_handle(cx);
 				window.focus(&handle, cx);
 			})
 			.unwrap();
-		cx.update(|cx| {
-			editor.update(cx, |editor, cx| editor.emplace("user typed", cx));
-		});
+		cx.update_window(window.clone().into(), |_, window, cx| {
+			editor.set_text("user typed", window, cx);
+		})
+		.expect("window open");
 		cx.update(|cx| {
 			view.update(cx, |view, cx| {
 				let engine = view.engine.clone();
@@ -3179,15 +3368,15 @@ mod tests {
 		});
 		cx.run_until_parked();
 		assert_eq!(
-			cx.read(|cx| editor.read(cx).as_str().to_string()),
+			cx.read(|cx| editor.value(cx)),
 			"user typed",
 			"the in-progress text survives the re-sync while focused"
 		);
 
 		// On blur the field re-syncs to the engine value.
 		window
-			.update(cx, |_root, window, _cx| {
-				window.blur();
+			.update(cx, |_root, window, cx| {
+				window.blur(cx);
 			})
 			.unwrap();
 		cx.update(|cx| {
@@ -3198,7 +3387,7 @@ mod tests {
 		});
 		cx.run_until_parked();
 		assert_eq!(
-			cx.read(|cx| editor.read(cx).as_str().to_string()),
+			cx.read(|cx| editor.value(cx)),
 			"文本\nsecond line",
 			"the field re-syncs to the engine value on blur"
 		);
@@ -3209,7 +3398,7 @@ mod tests {
 	/// pickers, sliders, checkboxes, vec2 spinboxes — and the three hidden
 	/// inputs (the legacy text, the vertical align, the use-args toggle)
 	/// render nothing at all.
-	#[gpui::test]
+	#[gpui_kit::test]
 	async fn text3_params_render_as_structured_controls(cx: &mut TestAppContext) {
 		use crate::oakui::mock::MockEngine;
 		struct Host {
@@ -3224,7 +3413,10 @@ mod tests {
 				div().size_full().child(self.view.clone())
 			}
 		}
-		cx.update(|cx| cx.init_colors());
+		cx.update(|cx| {
+			gpui_kit::init(cx);
+			cx.init_colors();
+		});
 		let window = cx.open_window(size(px(400.0), px(600.0)), |window, cx| {
 			let engine = cx.new(MockEngine::create);
 			let view =
@@ -3257,9 +3449,9 @@ mod tests {
 
 		// Draw once: the render pass is where `sync_values` reapplies the
 		// engine snapshot to the widgets (the sliders snap to their grid).
-		let visual = gpui::VisualTestContext::from_window(window.into(), cx).into_mut();
+		let visual = gpui_kit::VisualTestContext::from_window(window.into(), cx).into_mut();
 		visual.update(|window, cx| {
-			window.draw(cx).clear();
+			window.draw(cx).clear(cx);
 		});
 
 		/// One plain-data snapshot of the control set (the kinds carry
@@ -3312,7 +3504,7 @@ mod tests {
 					ControlKind::Text { editor, multiline } => {
 						snap.texts.push((
 							control.input_id.clone(),
-							editor.read(cx).as_str().to_string(),
+							editor.value(cx),
 							*multiline,
 						));
 						if *multiline {
@@ -3694,7 +3886,7 @@ mod tests {
 	/// segment falls through to the auto slope.
 	#[test]
 	fn curve_from_editor_recovers_slopes_from_handles_and_neighbours() {
-		use gpui_widgets::curve_editor::{CurvePoint, CurveVec2};
+		use crate::widgets::curve_editor::{CurvePoint, CurveVec2};
 		let v = CurveVec2::new;
 		let unit = (0.0, 1.0, 0.0, 1.0);
 
@@ -3795,7 +3987,7 @@ mod tests {
 	/// handles must match.
 	#[test]
 	fn curve_points_close_compares_coordinates_and_handles() {
-		use gpui_widgets::curve_editor::{CurvePoint, CurveVec2};
+		use crate::widgets::curve_editor::{CurvePoint, CurveVec2};
 		let a = vec![
 			CurvePoint::new(0.0, 0.0),
 			CurvePoint::with_handles(0.5, 0.5, CurveVec2::new(0.1, 0.1)),
@@ -4299,10 +4491,13 @@ mod tests {
 		width: f32,
 		height: f32,
 	) -> (
-		gpui::WindowHandle<ParamsHost>,
+		gpui_kit::WindowHandle<ParamsHost>,
 		Entity<OfxParamsView<MockEngine>>,
 	) {
-		cx.update(|cx| cx.init_colors());
+		cx.update(|cx| {
+			gpui_kit::init(cx);
+			cx.init_colors();
+		});
 		let window = cx.open_window(size(px(width), px(height)), |window, cx| {
 			let engine = cx.new(MockEngine::create);
 			let view =
@@ -4320,7 +4515,7 @@ mod tests {
 	/// controls are deliberately NOT added to the view.
 	fn build_in_view(
 		view: &Entity<OfxParamsView<MockEngine>>,
-		visual: &mut gpui::VisualTestContext,
+		visual: &mut gpui_kit::VisualTestContext,
 		params: Vec<EffectParam>,
 	) -> Vec<ParamControl> {
 		visual.update(|window, cx| {
@@ -4339,7 +4534,7 @@ mod tests {
 	/// child entities stay alive.
 	fn add_and_wire_in_view(
 		view: &Entity<OfxParamsView<MockEngine>>,
-		visual: &mut gpui::VisualTestContext,
+		visual: &mut gpui_kit::VisualTestContext,
 		params: Vec<EffectParam>,
 	) {
 		visual.update(|window, cx| {
@@ -4391,10 +4586,10 @@ mod tests {
 
 	/// `build_control` maps every value type to its widget (or read-only
 	/// line), seeding the values and deriving the wrapped labels.
-	#[gpui::test]
+	#[gpui_kit::test]
 	async fn build_control_builds_a_widget_for_every_param_kind(cx: &mut TestAppContext) {
 		let (window, view) = open_params_view(cx, 420.0, 900.0);
-		let visual = gpui::VisualTestContext::from_window(window.into(), cx).into_mut();
+		let visual = gpui_kit::VisualTestContext::from_window(window.into(), cx).into_mut();
 
 		let params = vec![
 			mk_param(
@@ -4534,7 +4729,7 @@ mod tests {
 			match &by_id("text_multi_in").kind {
 				ControlKind::Text { editor, multiline } => {
 					assert!(*multiline);
-					assert_eq!(editor.read(cx).as_str(), "hello");
+					assert_eq!(editor.value(cx), "hello");
 				}
 				_ => panic!("text params build an editor"),
 			}
@@ -4613,12 +4808,12 @@ mod tests {
 	/// `sync_values` reapplies the engine snapshot to every widget kind
 	/// (including hidden params a mock/plugin engine may hand over) and
 	/// drains a viewer eyedropper pick into the colour picker's draft.
-	#[gpui::test]
+	#[gpui_kit::test]
 	async fn sync_values_applies_the_engine_snapshot_and_viewer_picks(cx: &mut TestAppContext) {
 		let (window, view) = open_params_view(cx, 420.0, 900.0);
-		let visual = gpui::VisualTestContext::from_window(window.into(), cx).into_mut();
+		let visual = gpui_kit::VisualTestContext::from_window(window.into(), cx).into_mut();
 		visual.update(|window, cx| {
-			window.draw(cx).clear();
+			window.draw(cx).clear(cx);
 		});
 
 		// Extra controls whose input ids collide with engine params: a
@@ -4696,7 +4891,8 @@ mod tests {
 		});
 
 		// Corrupt every widget, then let sync_values restore it.
-		visual.update(|_window, cx| {
+		visual.update(|window, cx| {
+			let window = window as &mut gpui_kit::Window;
 			view.update(cx, |view, cx| {
 				for control in &view.controls {
 					match &control.kind {
@@ -4730,7 +4926,7 @@ mod tests {
 							});
 						}
 						ControlKind::Text { editor, .. } => {
-							editor.update(cx, |e, cx| e.emplace("corrupted", cx));
+							editor.set_text("corrupted", window, cx);
 						}
 						ControlKind::Curve(_)
 						| ControlKind::PushButton
@@ -4796,7 +4992,7 @@ mod tests {
 					.filter(|c| c.input_id == "font_family_in")
 					.find_map(|c| match &c.kind {
 						ControlKind::Text { editor, .. } => {
-							Some(editor.read(cx).as_str().to_string())
+							Some(editor.value(cx))
 						}
 						_ => None,
 					})
@@ -4845,10 +5041,10 @@ mod tests {
 	/// The render pass lays out every control kind and emits the section
 	/// titles (group-only, combined, page-only, none); an empty control set
 	/// renders the placeholder line instead.
-	#[gpui::test]
+	#[gpui_kit::test]
 	async fn params_view_renders_sections_and_extended_controls(cx: &mut TestAppContext) {
 		let (window, view) = open_params_view(cx, 420.0, 900.0);
-		let visual = gpui::VisualTestContext::from_window(window.into(), cx).into_mut();
+		let visual = gpui_kit::VisualTestContext::from_window(window.into(), cx).into_mut();
 
 		let params = vec![
 			mk_param(
@@ -4904,7 +5100,7 @@ mod tests {
 			view.update(cx, |view, _cx| view.controls = extras);
 		});
 		visual.update(|window, cx| {
-			window.draw(cx).clear();
+			window.draw(cx).clear(cx);
 		});
 		assert!(visual.debug_bounds("params-host").is_some());
 
@@ -4938,7 +5134,7 @@ mod tests {
 		// ids have no engine param, so the sync skips them) and paints
 		// again.
 		visual.update(|window, cx| {
-			window.draw(cx).clear();
+			window.draw(cx).clear(cx);
 		});
 
 		// An empty view renders its placeholder text branch.
@@ -4946,7 +5142,7 @@ mod tests {
 			view.update(cx, |view, _cx| view.controls.clear());
 		});
 		visual.update(|window, cx| {
-			window.draw(cx).clear();
+			window.draw(cx).clear(cx);
 		});
 		assert!(visual.debug_bounds("params-host").is_some());
 	}
@@ -4954,12 +5150,12 @@ mod tests {
 	/// The push-button row and the text row's commit button are clickable:
 	/// their clicks route to `effect_push_button` / `set_effect_param` (the
 	/// mock engine rejects both, which the view swallows).
-	#[gpui::test]
+	#[gpui_kit::test]
 	async fn push_button_and_text_commit_clicks_fire(cx: &mut TestAppContext) {
 		let (window, view) = open_params_view(cx, 420.0, 240.0);
-		let visual = gpui::VisualTestContext::from_window(window.into(), cx).into_mut();
+		let visual = gpui_kit::VisualTestContext::from_window(window.into(), cx).into_mut();
 		visual.update(|window, cx| {
-			window.draw(cx).clear();
+			window.draw(cx).clear(cx);
 		});
 
 		let params = vec![
@@ -4981,7 +5177,7 @@ mod tests {
 			view.update(cx, |view, _cx| view.controls = extras);
 		});
 		visual.update(|window, cx| {
-			window.draw(cx).clear();
+			window.draw(cx).clear(cx);
 		});
 
 		let host = visual.debug_bounds("params-host").expect("host painted");
@@ -5033,14 +5229,14 @@ mod tests {
 	/// spin boxes (the whole value is rebuilt from the current one), curve
 	/// editors (all three edit events rebuild and commit the JSON) and the
 	/// colour picker's commit / eyedropper events.
-	#[gpui::test]
+	#[gpui_kit::test]
 	async fn control_events_route_through_the_engine_callbacks(cx: &mut TestAppContext) {
-		use gpui_widgets::curve_editor::{CurveEditorEvent, CurvePoint, CurveVec2, HandleSide};
+		use crate::widgets::curve_editor::{CurveEditorEvent, CurvePoint, CurveVec2, HandleSide};
 
 		let (window, view) = open_params_view(cx, 420.0, 900.0);
-		let visual = gpui::VisualTestContext::from_window(window.into(), cx).into_mut();
+		let visual = gpui_kit::VisualTestContext::from_window(window.into(), cx).into_mut();
 		visual.update(|window, cx| {
-			window.draw(cx).clear();
+			window.draw(cx).clear(cx);
 		});
 
 		// The mock parameter set has no int slider, int combo or curves:
@@ -5075,7 +5271,7 @@ mod tests {
 			],
 		);
 		visual.update(|window, cx| {
-			window.draw(cx).clear();
+			window.draw(cx).clear(cx);
 		});
 
 		let (slider, check, combo, spin, picker, int_slider, int_combo, curve) =
@@ -5335,11 +5531,14 @@ mod tests {
 		cx: &mut TestAppContext,
 		color: Rgba,
 	) -> (
-		gpui::WindowHandle<PickerHost>,
+		gpui_kit::WindowHandle<PickerHost>,
 		Entity<OfxColorPicker>,
 		Arc<Mutex<Vec<OfxColorEvent>>>,
 	) {
-		cx.update(|cx| cx.init_colors());
+		cx.update(|cx| {
+			gpui_kit::init(cx);
+			cx.init_colors();
+		});
 		let window = cx.open_window(size(px(320.0), px(560.0)), |window, cx| {
 			let picker = cx.new(|cx| OfxColorPicker::new(1, color, window, cx));
 			let events = Arc::new(Mutex::new(Vec::new()));
@@ -5383,7 +5582,7 @@ mod tests {
 	/// The picker's RGB channel sliders only mutate the draft (never the
 	/// committed colour), refresh the hex field, and ignore non-value /
 	/// out-of-range events.
-	#[gpui::test]
+	#[gpui_kit::test]
 	async fn color_picker_rgb_sliders_update_the_draft(cx: &mut TestAppContext) {
 		let (_window, picker, events) = open_picker(
 			cx,
@@ -5412,7 +5611,7 @@ mod tests {
 		assert!((draft.a - 0.25).abs() < 1e-6);
 		assert_eq!(cx.read(|cx| picker.read(cx).committed), committed);
 		assert_eq!(
-			cx.read(|cx| picker.read(cx).hex.read(cx).as_str().to_string()),
+			cx.read(|cx| picker.read(cx).hex.read(cx).value().to_string()),
 			format_hex(draft),
 			"the hex field follows the draft"
 		);
@@ -5436,7 +5635,7 @@ mod tests {
 	/// HSV mode: the primary sliders edit hue/saturation/value, the palette
 	/// keeps the hue, the hue bar keeps saturation/value, and switching back
 	/// re-ranges the sliders.
-	#[gpui::test]
+	#[gpui_kit::test]
 	async fn color_picker_hsv_mode_palette_and_hue_update_the_draft(cx: &mut TestAppContext) {
 		let (_window, picker, _events) = open_picker(
 			cx,
@@ -5511,7 +5710,7 @@ mod tests {
 	/// Commit validates a hand-typed hex string (an invalid one keeps the
 	/// popup open with the error hint and commits nothing), cancel discards
 	/// the draft, and both disarm a left-armed eyedropper.
-	#[gpui::test]
+	#[gpui_kit::test]
 	async fn color_picker_commit_validates_hex_and_cancel_discards(cx: &mut TestAppContext) {
 		let (_window, picker, events) = open_picker(
 			cx,
@@ -5522,12 +5721,17 @@ mod tests {
 				a: 1.0,
 			},
 		);
+		// `set_value` does not emit `Change`, so run the live-parse handler
+		// the Change subscription runs for a real keypress afterwards.
 		let set_hex = |cx: &mut TestAppContext, text: &str| {
 			cx.update(|cx| {
 				picker.update(cx, |p, cx| {
 					let hex = p.hex.clone();
-					hex.update(cx, |hex, cx| hex.emplace(text, cx));
+					crate::oakui::component::text_input::set_input_text(&hex, text, cx);
 				});
+			});
+			cx.update(|cx| {
+				picker.update(cx, |p, cx| p.on_hex_edited(cx));
 			});
 		};
 		let open = |cx: &mut TestAppContext| {
@@ -5636,7 +5840,7 @@ mod tests {
 		});
 		let (picking, committed, hex) = cx.read(|cx| {
 			let p = picker.read(cx);
-			(p.picking, p.committed, p.hex.read(cx).as_str().to_string())
+			(p.picking, p.committed, p.hex.read(cx).value().to_string())
 		});
 		assert!(!picking, "commit disarms the eyedropper");
 		assert_eq!(
@@ -5665,7 +5869,7 @@ mod tests {
 	/// The popup's interactive chrome: the swatch toggles it, the RGB/HSV
 	/// tabs switch modes, the hue bar samples, Escape closes (or disarms a
 	/// picking eyedropper first), and the Cancel/OK buttons close it.
-	#[gpui::test]
+	#[gpui_kit::test]
 	async fn color_picker_popup_swatch_tabs_escape_and_buttons(cx: &mut TestAppContext) {
 		let (window, picker, events) = open_picker(
 			cx,
@@ -5676,9 +5880,9 @@ mod tests {
 				a: 0.5,
 			},
 		);
-		let visual = gpui::VisualTestContext::from_window(window.into(), cx).into_mut();
+		let visual = gpui_kit::VisualTestContext::from_window(window.into(), cx).into_mut();
 		visual.update(|window, cx| {
-			window.draw(cx).clear();
+			window.draw(cx).clear(cx);
 		});
 		let swatch = visual
 			.debug_bounds("ofx-color-swatch")
@@ -5688,7 +5892,7 @@ mod tests {
 		// Open the popup.
 		visual.simulate_click(swatch_center, Modifiers::default());
 		visual.update(|window, cx| {
-			window.draw(cx).clear();
+			window.draw(cx).clear(cx);
 		});
 		assert!(visual.debug_bounds("ofx-color-popup").is_some());
 
@@ -5698,7 +5902,7 @@ mod tests {
 			.expect("hsv tab painted");
 		visual.simulate_click(hsv_tab.center(), Modifiers::default());
 		visual.update(|window, cx| {
-			window.draw(cx).clear();
+			window.draw(cx).clear(cx);
 		});
 		assert_eq!(visual.read(|cx| picker.read(cx).mode), ColorMode::Hsv);
 		let rgb_tab = visual
@@ -5732,16 +5936,12 @@ mod tests {
 		// Reopen and click Cancel.
 		visual.simulate_click(swatch_center, Modifiers::default());
 		visual.update(|window, cx| {
-			window.draw(cx).clear();
+			window.draw(cx).clear(cx);
 		});
-		let popup = visual
-			.debug_bounds("ofx-color-popup")
-			.expect("popup painted");
-		let cancel_at = Point::new(
-			popup.origin.x + px(30.0),
-			popup.origin.y + popup.size.height - px(51.0),
-		);
-		visual.simulate_click(cancel_at, Modifiers::default());
+		let cancel = visual
+			.debug_bounds("ofx-color-cancel-1")
+			.expect("cancel button painted");
+		visual.simulate_click(cancel.center(), Modifiers::default());
 		cx.run_until_parked();
 		assert!(
 			!visual.read(|cx| picker.read(cx).open),
@@ -5752,22 +5952,24 @@ mod tests {
 		// (the error hint branch paints) and nothing commits.
 		visual.simulate_click(swatch_center, Modifiers::default());
 		visual.update(|window, cx| {
-			window.draw(cx).clear();
+			window.draw(cx).clear(cx);
 		});
-		visual.update(|_window, cx| {
+		visual.update(|window, cx| {
 			picker.update(cx, |p, cx| {
 				let hex = p.hex.clone();
-				hex.update(cx, |hex, cx| hex.emplace("#nope", cx));
+				hex.update(cx, |hex, cx| hex.set_value("#nope", window, cx));
+				// `set_value` emits no `Change`; run the live-parse handler
+				// the subscription runs for a real keypress.
+				p.on_hex_edited(cx);
 			});
 		});
-		let popup = visual
-			.debug_bounds("ofx-color-popup")
-			.expect("popup painted");
-		let ok_at = Point::new(
-			popup.origin.x + popup.size.width - px(24.0),
-			popup.origin.y + popup.size.height - px(51.0),
-		);
-		visual.simulate_click(ok_at, Modifiers::default());
+		visual.update(|window, cx| {
+			window.draw(cx).clear(cx);
+		});
+		let ok = visual
+			.debug_bounds("ofx-color-ok-1")
+			.expect("ok button painted");
+		visual.simulate_click(ok.center(), Modifiers::default());
 		cx.run_until_parked();
 		assert!(
 			visual.read(|cx| picker.read(cx).open),
@@ -5776,20 +5978,20 @@ mod tests {
 		assert!(visual.read(|cx| picker.read(cx).hex_error));
 
 		// A valid hex + OK commits and closes.
-		visual.update(|_window, cx| {
+		visual.update(|window, cx| {
 			picker.update(cx, |p, cx| {
 				let hex = p.hex.clone();
-				hex.update(cx, |hex, cx| hex.emplace("#123456", cx));
+				hex.update(cx, |hex, cx| hex.set_value("#123456", window, cx));
+				p.on_hex_edited(cx);
 			});
 		});
 		visual.update(|window, cx| {
-			window.draw(cx).clear();
+			window.draw(cx).clear(cx);
 		});
-		let ok_at = Point::new(
-			popup.origin.x + popup.size.width - px(24.0),
-			popup.origin.y + popup.size.height - px(51.0),
-		);
-		visual.simulate_click(ok_at, Modifiers::default());
+		let ok = visual
+			.debug_bounds("ofx-color-ok-1")
+			.expect("ok button painted");
+		visual.simulate_click(ok.center(), Modifiers::default());
 		cx.run_until_parked();
 		assert!(!visual.read(|cx| picker.read(cx).open), "OK closes the popup");
 		let committed = visual.read(|cx| picker.read(cx).committed);
@@ -5801,7 +6003,7 @@ mod tests {
 		// Escape closes the popup when the hex field has focus.
 		visual.simulate_click(swatch_center, Modifiers::default());
 		visual.update(|window, cx| {
-			window.draw(cx).clear();
+			window.draw(cx).clear(cx);
 		});
 		let hex_handle = visual.read(|cx| picker.read(cx).hex.read(cx).focus_handle(cx));
 		visual.update(|window, cx| {
@@ -5817,7 +6019,7 @@ mod tests {
 		// a second Escape then closes.
 		visual.simulate_click(swatch_center, Modifiers::default());
 		visual.update(|window, cx| {
-			window.draw(cx).clear();
+			window.draw(cx).clear(cx);
 		});
 		let pick_button = visual
 			.debug_bounds("ofx-color-pick-viewer-1")
@@ -5842,7 +6044,7 @@ mod tests {
 
 	/// Dragging inside the S/V palette and the hue bar updates the draft
 	/// through the drag-move handlers (and renders the drag ghosts).
-	#[gpui::test]
+	#[gpui_kit::test]
 	async fn color_picker_palette_and_hue_drags_update_the_draft(cx: &mut TestAppContext) {
 		let (window, picker, _events) = open_picker(
 			cx,
@@ -5853,16 +6055,16 @@ mod tests {
 				a: 0.5,
 			},
 		);
-		let visual = gpui::VisualTestContext::from_window(window.into(), cx).into_mut();
+		let visual = gpui_kit::VisualTestContext::from_window(window.into(), cx).into_mut();
 		visual.update(|window, cx| {
-			window.draw(cx).clear();
+			window.draw(cx).clear(cx);
 		});
 		let swatch = visual
 			.debug_bounds("ofx-color-swatch")
 			.expect("swatch painted");
 		visual.simulate_click(swatch.center(), Modifiers::default());
 		visual.update(|window, cx| {
-			window.draw(cx).clear();
+			window.draw(cx).clear(cx);
 		});
 
 		// Press inside the palette, then move well past the drag threshold:

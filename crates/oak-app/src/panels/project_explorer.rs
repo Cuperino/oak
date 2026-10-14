@@ -19,25 +19,29 @@
 
 use std::process::Command;
 
-use gpui::colors::DefaultColors;
-use gpui::dock::{DockPanel, PanelEvent};
-use gpui::{
-	div, px, prelude::*, AnyElement, App, ClickEvent, Context, Entity, EventEmitter, MouseButton,
-	PathPromptOptions, Pixels, Point, Render, SharedString, Window,
+use gpui_kit::colors::DefaultColors;
+use gpui_kit::component::dock::{BasePanel, Panel, PanelEvent};
+use gpui_kit::{FocusHandle, Focusable};
+use crate::panels::PanelFocused;
+use gpui_kit::{
+	div, px, prelude::*, App, ClickEvent, Context, Entity, EventEmitter, MouseButton,
+	PathPromptOptions, Pixels, Point, Render, Window,
 };
 use crate::oakui::component::menu::{Menu, MenuItem};
-use gpui_widgets::project_explorer::{ProjectExplorer, ProjectExplorerEvent};
-use gpui_widgets::tooltip::tooltip_view;
+use crate::widgets::project_explorer::{ProjectExplorer, ProjectExplorerEvent};
+use crate::widgets::tooltip::tooltip_view;
 
 use crate::actions::ActionId;
 use crate::oakui::component::menu::{ContextMenuHandle, ContextMenuTriggered};
 use crate::oakui::component::menu;
 use crate::oakui::AppEngine;
 use crate::panels::commands::PanelCommandHandler;
-use crate::panels::ids::PROJECT;
 
 /// The material bin panel.
 pub struct ProjectExplorerPanel<E: AppEngine> {
+	/// The panel's focus handle (the dock's zoom/focus and the
+	/// shell's focused-panel routing need it).
+	focus_handle: FocusHandle,
 	explorer: Entity<ProjectExplorer<E>>,
 	engine: Entity<E>,
 	/// The right-click context menu.
@@ -92,6 +96,7 @@ impl<E: AppEngine> ProjectExplorerPanel<E> {
 		.detach();
 
 		Self {
+			focus_handle: cx.focus_handle(),
 			explorer,
 			engine,
 			context_menu,
@@ -144,7 +149,6 @@ impl<E: AppEngine> ProjectExplorerPanel<E> {
 					directories: false,
 					multiple: false,
 					prompt: Some(crate::i18n::tr("project.context.replace_footage").into()),
-				allowed_extensions: Vec::new(),
 				});
 				cx.spawn(async move |this, cx| {
 					if let Ok(Ok(Some(paths))) = receiver.await {
@@ -305,8 +309,8 @@ impl<E: AppEngine> Render for ProjectExplorerPanel<E> {
 			// dock re-emits this as `DockEvent::PanelFocused`, which the
 			// shell uses to route focused-panel commands).
 			.on_mouse_down(MouseButton::Left, {
-				cx.listener(|_this, _event: &gpui::MouseDownEvent, _window, cx| {
-					cx.emit(PanelEvent::Focused);
+				cx.listener(|_this, _event: &gpui_kit::MouseDownEvent, _window, cx| {
+					cx.emit(PanelFocused);
 				})
 			})
 			.child(header)
@@ -364,19 +368,23 @@ pub struct ExportSequenceRequested(pub u64);
 
 impl<E: AppEngine> EventEmitter<ExportSequenceRequested> for ProjectExplorerPanel<E> {}
 
-impl<E: AppEngine> DockPanel for ProjectExplorerPanel<E> {
-	fn panel_id(&self) -> gpui::dock::PanelId {
-		PROJECT
-	}
+impl<E: AppEngine> EventEmitter<PanelFocused> for ProjectExplorerPanel<E> {}
 
-	fn title(&self, _cx: &App) -> SharedString {
-		crate::i18n::tr("panel.project").into()
+impl<E: AppEngine> Focusable for ProjectExplorerPanel<E> {
+	fn focus_handle(&self, _cx: &App) -> FocusHandle {
+		self.focus_handle.clone()
 	}
+}
 
-	fn tab_content(&self, _cx: &App) -> AnyElement {
-		div()
-			.child(crate::i18n::tr("panel.project"))
-			.into_any_element()
+impl<E: AppEngine> BasePanel for ProjectExplorerPanel<E> {
+	fn panel_name(&self) -> &'static str {
+		crate::panels::ids::PROJECT
+	}
+}
+
+impl<E: AppEngine> Panel for ProjectExplorerPanel<E> {
+	fn title(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+		crate::i18n::tr("panel.project")
 	}
 }
 
@@ -527,8 +535,8 @@ fn reveal_in_finder(path: &std::path::Path) {
 mod tests {
 	use super::*;
 	use crate::oakui::MockEngine;
-	use gpui::{px, size, TestAppContext, VisualTestContext};
-	use gpui_widgets::project_explorer::ProjectDataSource;
+	use gpui_kit::{px, size, TestAppContext, VisualTestContext};
+	use crate::widgets::project_explorer::ProjectDataSource;
 
 	/// Serializes the tests that touch process-global state (the undo stack,
 	/// the media/codec library and the panel's HOME override).
@@ -544,7 +552,10 @@ mod tests {
 		&'static mut VisualTestContext,
 		Entity<ProjectExplorerPanel<MockEngine>>,
 	) {
-		cx.update(|cx| cx.init_colors());
+		cx.update(|cx| {
+			gpui_kit::init(cx);
+			cx.init_colors();
+		});
 		let window = cx.open_window(size(px(640.0), px(480.0)), |window, cx| {
 			let engine = cx.new(MockEngine::demo);
 			ProjectExplorerPanel::new(engine, window, cx)
@@ -558,11 +569,11 @@ mod tests {
 	/// The widget's requests reach the panel's engine: open selects/opens
 	/// the entry, dropped files import, and a right-click request opens the
 	/// context-menu popup.
-	#[gpui::test]
+	#[gpui_kit::test]
 	async fn explorer_events_route_to_the_engine_and_open_the_menu(cx: &mut TestAppContext) {
 		let (cx, panel) = mock_panel_window(cx);
 		cx.update(|window, cx| {
-			window.draw(cx).clear();
+			window.draw(cx).clear(cx);
 		});
 		let explorer = cx.update(|_, cx| panel.read(cx).explorer.clone());
 		let engine = cx.update(|_, cx| panel.read(cx).engine.clone());
@@ -602,12 +613,12 @@ mod tests {
 			cx.emit(ProjectExplorerEvent::ContextMenuRequested {
 				control: 1,
 				id: Some(3),
-				position: gpui::point(px(20.0), px(20.0)),
+				position: gpui_kit::point(px(20.0), px(20.0)),
 			});
 		});
 		cx.run_until_parked();
 		cx.update(|window, cx| {
-			window.draw(cx).clear();
+			window.draw(cx).clear(cx);
 		});
 		assert!(
 			cx.debug_bounds("menu-popup").is_some(),
@@ -618,12 +629,15 @@ mod tests {
 	/// The full context-menu selection: an empty-area click gets the blank
 	/// menu, footage gets the footage menu (with its proxy state), a
 	/// sequence gets the sequence menu and anything else the entry menu.
-	#[gpui::test]
+	#[gpui_kit::test]
 	async fn context_menu_selection_follows_the_engine(cx: &mut TestAppContext) {
 		use crate::oakui::real::RealEngine;
 		let _lock = stack_lock();
 		oak_undo::global::clear().unwrap();
-		cx.update(|cx| cx.init_colors());
+		cx.update(|cx| {
+			gpui_kit::init(cx);
+			cx.init_colors();
+		});
 		let media = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/demo.mp4");
 		let window = cx.open_window(size(px(640.0), px(480.0)), |window, cx| {
 			let engine = cx.new(RealEngine::create);
@@ -728,7 +742,7 @@ mod tests {
 		// The import path counts what is actually in the project: a bogus
 		// dropped path adds nothing (the engine rejects it before any node
 		// lands), a real one adds exactly one entry.
-		let entry_count = |app: &gpui::App| -> usize {
+		let entry_count = |app: &gpui_kit::App| -> usize {
 			let engine = engine.read(app);
 			let roots = engine.roots();
 			let children: usize = roots
@@ -797,7 +811,7 @@ mod tests {
 		for id in [None, Some(footage_id), Some(seq_id), Some(1)] {
 			cx.update(|_, cx| {
 				panel.update(cx, |panel, cx| {
-					panel.open_context_menu(id, gpui::point(px(20.0), px(20.0)), cx);
+					panel.open_context_menu(id, gpui_kit::point(px(20.0), px(20.0)), cx);
 				});
 			});
 			cx.run_until_parked();
@@ -832,7 +846,7 @@ mod tests {
 	/// entry, the emissions fire with one, the prompt-driven replace runs
 	/// its async body (both a selection and a cancellation) and the proxy
 	/// items apply to the mock's footage.
-	#[gpui::test]
+	#[gpui_kit::test]
 	async fn local_menu_items_apply_and_guard(cx: &mut TestAppContext) {
 		let (cx, panel) = mock_panel_window(cx);
 		let engine = cx.update(|_, cx| panel.read(cx).engine.clone());
@@ -935,11 +949,9 @@ mod tests {
 	}
 
 	/// The panel's dock metadata and the platform reveal helper.
-	#[gpui::test]
+	#[gpui_kit::test]
 	async fn panel_metadata_and_reveal(cx: &mut TestAppContext) {
-		let (cx, panel) = mock_panel_window(cx);
-		let _ = cx.update(|_, cx| panel.read(cx).tab_content(cx));
-		let _ = cx.update(|_, cx| panel.read(cx).title(cx));
+		let (_cx, _panel) = mock_panel_window(cx);
 		reveal_in_finder(std::path::Path::new("/tmp"));
 	}
 

@@ -16,8 +16,9 @@
 
 //! The dockable panels of the main window.
 //!
-//! Each panel is a gpui view implementing [`DockPanel`](gpui::dock::DockPanel)
-//! so it can live inside the [`DockArea`](gpui::dock::DockArea) shell. Panels
+//! Each panel is a gpui-kit dock panel: `BasePanel` for identity and
+//! `Panel` for the tab presentation, so it can live inside the
+//! [`DockArea`](gpui_kit::component::dock::DockArea) shell. Panels
 //! own their widgets (created in their constructors), hold the
 //! [`MockEngine`](crate::oakui::MockEngine) entity so requests can be routed
 //! to "the engine", and never mutate engine state directly — every edit is a
@@ -36,37 +37,44 @@ pub mod source_viewer;
 pub mod status_bar;
 pub mod timeline;
 
-pub use gpui::dock::PanelId;
+/// A dock panel's identity: its `BasePanel::panel_name` (the layout's
+/// persistence key, the 窗口 menu's toggle target).
+pub type PanelId = &'static str;
+
+/// Emitted by a panel when a click inside it makes it the focused panel;
+/// the shell subscribes per panel (the subscribing entity identifies the
+/// panel) and routes focused-panel commands to it.
+pub struct PanelFocused;
 
 /// Stable panel ids, unique within the dock area.
 pub mod ids {
 	use super::PanelId;
 	/// The material bin (项目).
-	pub const PROJECT: PanelId = PanelId::new(1);
+	pub const PROJECT: PanelId = "project";
 	/// The source viewer (素材查看器).
-	pub const SOURCE_VIEWER: PanelId = PanelId::new(2);
+	pub const SOURCE_VIEWER: PanelId = "source-viewer";
 	/// The program viewer (序列查看器).
-	pub const PROGRAM_VIEWER: PanelId = PanelId::new(3);
+	pub const PROGRAM_VIEWER: PanelId = "program-viewer";
 	/// The node editor (节点编辑器).
-	pub const NODE_EDITOR: PanelId = PanelId::new(4);
+	pub const NODE_EDITOR: PanelId = "node-editor";
 	/// The inspector / effect stack (检查器·效果栈).
-	pub const INSPECTOR: PanelId = PanelId::new(5);
+	pub const INSPECTOR: PanelId = "inspector";
 	/// The undo history (历史记录).
-	pub const HISTORY: PanelId = PanelId::new(6);
+	pub const HISTORY: PanelId = "history";
 	/// The timeline (时间线).
-	pub const TIMELINE: PanelId = PanelId::new(7);
+	pub const TIMELINE: PanelId = "timeline";
 	/// The effect library (效果库).
-	pub const EFFECT_LIBRARY: PanelId = PanelId::new(8);
+	pub const EFFECT_LIBRARY: PanelId = "effect-library";
 	/// The multicam panel (多机位).
-	pub const MULTICAM: PanelId = PanelId::new(9);
+	pub const MULTICAM: PanelId = "multicam";
 }
 
 /// A small info chip used in viewer headers and the status bar: muted
 /// background, thin border, small text. `colors` comes from the caller's
 /// `cx.default_colors()` so the chip follows the active theme.
-pub(crate) fn chip(colors: &gpui::colors::Colors, label: impl gpui::IntoElement) -> gpui::Div {
-	use gpui::prelude::*;
-	gpui::div()
+pub(crate) fn chip(colors: &gpui_kit::colors::Colors, label: impl gpui_kit::IntoElement) -> gpui_kit::Div {
+	use gpui_kit::prelude::*;
+	gpui_kit::div()
 		.px_2()
 		.py_1()
 		.rounded_sm()

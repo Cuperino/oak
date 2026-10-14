@@ -24,20 +24,22 @@
 use std::collections::HashSet;
 
 use crate::oakui::component::text_input;
-use gpui::colors::DefaultColors;
-use gpui::dock::{DockPanel, PanelEvent};
-use gpui::{
-	div, prelude::*, AnyElement, App, ClickEvent, Context, Entity, EventEmitter, MouseButton,
+use gpui_kit::colors::DefaultColors;
+use gpui_kit::component::dock::{BasePanel, Panel, PanelEvent};
+use gpui_kit::{FocusHandle, Focusable};
+use crate::panels::PanelFocused;
+use gpui_kit::{
+	div, prelude::*, App, ClickEvent, Context, Entity, EventEmitter, MouseButton,
 	Render, SharedString, Window,
 };
-use gpui_elements::editable_text::{EditableTextState, StringStorage, TextChanged};
+use gpui_kit::base::input::InputState;
+use gpui_kit::component::input::InputEvent;
 
 use crate::i18n;
 use crate::oakui::effectchain::group_label;
 use crate::oakui::engine::EffectEntry;
 use crate::oakui::AppEngine;
 use crate::panels::commands::PanelCommandHandler;
-use crate::panels::ids::EFFECT_LIBRARY;
 
 /// The config key the collapsed groups are persisted under (a comma
 /// separated list of group keys — the keys [`EffectEntry::group`] holds,
@@ -46,10 +48,13 @@ const COLLAPSED_CONFIG_KEY: &str = "EffectLibraryCollapsed";
 
 /// The effect library panel.
 pub struct EffectLibraryPanel<E: AppEngine> {
+	/// The panel's focus handle (the dock's zoom/focus and the
+	/// shell's focused-panel routing need it).
+	focus_handle: FocusHandle,
 	engine: Entity<E>,
 	/// The search box state: live-filters the list by name / type id
 	/// (case-insensitive substring).
-	search: Entity<EditableTextState>,
+	search: Entity<InputState>,
 	/// The group keys whose entries are collapsed away. The headers stay
 	/// rendered (and clickable) so a collapsed group can be reopened.
 	collapsed: HashSet<String>,
@@ -57,17 +62,20 @@ pub struct EffectLibraryPanel<E: AppEngine> {
 
 impl<E: AppEngine> EffectLibraryPanel<E> {
 	/// Builds the panel over `engine`'s addable-effect table.
-	pub fn new(engine: Entity<E>, _window: &mut Window, cx: &mut Context<Self>) -> Self {
+	pub fn new(engine: Entity<E>, window: &mut Window, cx: &mut Context<Self>) -> Self {
 		// Re-read the effect table whenever the engine notifies (the table
 		// itself is static, but the selection hint depends on the target).
 		cx.observe(&engine, |_this, _engine, cx| cx.notify())
 			.detach();
-		let search = cx.new(|cx| EditableTextState::new(StringStorage::default(), cx));
-		cx.subscribe(&search, |_this, _state, _event: &TextChanged, cx| {
-			cx.notify();
+		let search = cx.new(|cx| InputState::new(window, cx));
+		cx.subscribe(&search, |_this, _state, event: &InputEvent, cx| {
+			if matches!(event, InputEvent::Change) {
+				cx.notify();
+			}
 		})
 		.detach();
 		Self {
+			focus_handle: cx.focus_handle(),
 			engine,
 			search,
 			collapsed: load_collapsed(),
@@ -150,7 +158,7 @@ impl<E: AppEngine> Render for EffectLibraryPanel<E> {
 	fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
 		let colors = cx.default_colors().clone();
 		let effects = self.engine.read(cx).addable_effects();
-		let query = self.search.read(cx).as_str().trim().to_lowercase();
+		let query = self.search.read(cx).value().trim().to_lowercase();
 
 		let mut list = div()
 			.id("effect-library-list")
@@ -206,7 +214,7 @@ impl<E: AppEngine> Render for EffectLibraryPanel<E> {
 			let row_id = entry.type_id.clone();
 			let name = entry.name.clone();
 			let type_id = entry.type_id.clone();
-			let drag_payload = gpui::effect_stack::LibraryEffectDrag {
+			let drag_payload = crate::widgets::effect_stack::LibraryEffectDrag {
 				type_id: SharedString::from(entry.type_id.clone()),
 				name: SharedString::from(entry.name.clone()),
 			};
@@ -254,8 +262,8 @@ impl<E: AppEngine> Render for EffectLibraryPanel<E> {
 			// dock re-emits this as `DockEvent::PanelFocused`, which the
 			// shell uses to route focused-panel commands).
 			.on_mouse_down(MouseButton::Left, {
-				cx.listener(|_this, _event: &gpui::MouseDownEvent, _window, cx| {
-					cx.emit(PanelEvent::Focused);
+				cx.listener(|_this, _event: &gpui_kit::MouseDownEvent, _window, cx| {
+					cx.emit(PanelFocused);
 				})
 			})
 			.child(
@@ -290,7 +298,7 @@ impl<E: AppEngine> Render for EffectLibraryPanel<E> {
 /// key ([`EffectEntry::group`], also the element id suffix); `label` is
 /// its display string.
 fn group_header(
-	colors: &gpui::colors::Colors,
+	colors: &gpui_kit::colors::Colors,
 	group_key: &str,
 	label: &str,
 	collapsed: bool,
@@ -312,7 +320,7 @@ fn group_header(
 		.items_center()
 		.gap_1()
 		.text_xs()
-		.font_weight(gpui::FontWeight(600.0))
+		.font_weight(gpui_kit::FontWeight(600.0))
 		.text_color(colors.disabled)
 		.hover(|style| style.text_color(colors.text))
 		.child(if collapsed { "▶" } else { "▼" })
@@ -344,19 +352,23 @@ impl Render for EffectDragGhost {
 
 impl<E: AppEngine> EventEmitter<PanelEvent> for EffectLibraryPanel<E> {}
 
-impl<E: AppEngine> DockPanel for EffectLibraryPanel<E> {
-	fn panel_id(&self) -> gpui::dock::PanelId {
-		EFFECT_LIBRARY
-	}
+impl<E: AppEngine> EventEmitter<PanelFocused> for EffectLibraryPanel<E> {}
 
-	fn title(&self, _cx: &App) -> SharedString {
-		i18n::tr("panel.effect_library").into()
+impl<E: AppEngine> Focusable for EffectLibraryPanel<E> {
+	fn focus_handle(&self, _cx: &App) -> FocusHandle {
+		self.focus_handle.clone()
 	}
+}
 
-	fn tab_content(&self, _cx: &App) -> AnyElement {
-		div()
-			.child(i18n::tr("panel.effect_library"))
-			.into_any_element()
+impl<E: AppEngine> BasePanel for EffectLibraryPanel<E> {
+	fn panel_name(&self) -> &'static str {
+		crate::panels::ids::EFFECT_LIBRARY
+	}
+}
+
+impl<E: AppEngine> Panel for EffectLibraryPanel<E> {
+	fn title(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+		i18n::tr("panel.effect_library")
 	}
 }
 
@@ -364,7 +376,7 @@ impl<E: AppEngine> DockPanel for EffectLibraryPanel<E> {
 mod tests {
 	use super::*;
 	use crate::oakui::MockEngine;
-	use gpui::{px, size, Modifiers, Point, TestAppContext, VisualTestContext};
+	use gpui_kit::{px, size, Modifiers, Point, TestAppContext, VisualTestContext};
 
 	/// Serializes the tests that read or write the process-global
 	/// collapsed-group key, and starts them from a clean value (a
@@ -465,10 +477,13 @@ mod tests {
 
 	/// The panel renders one row per addable effect of the engine (the
 	/// mock exposes the real factory's video-effect table).
-	#[gpui::test]
+	#[gpui_kit::test]
 	async fn lists_every_addable_effect(cx: &mut TestAppContext) {
 		let _guard = collapsed_config_lock();
-		cx.update(|cx| cx.init_colors());
+		cx.update(|cx| {
+			gpui_kit::init(cx);
+			cx.init_colors();
+		});
 		let window = cx.open_window(size(px(400.0), px(600.0)), |window, cx| {
 			let engine = cx.new(MockEngine::demo);
 			EffectLibraryPanel::new(engine, window, cx)
@@ -489,7 +504,7 @@ mod tests {
 
 	/// A collapsed group keeps its header (so it can be reopened) but
 	/// renders none of its rows; the groups below it are unaffected.
-	#[gpui::test]
+	#[gpui_kit::test]
 	async fn collapsing_a_group_hides_its_rows(cx: &mut TestAppContext) {
 		let _guard = collapsed_config_lock();
 
@@ -504,7 +519,10 @@ mod tests {
 			.expect("the table spreads over more than one group")
 			.clone();
 
-		cx.update(|cx| cx.init_colors());
+		cx.update(|cx| {
+			gpui_kit::init(cx);
+			cx.init_colors();
+		});
 		let window = cx.open_window(size(px(400.0), px(600.0)), |window, cx| {
 			let engine = cx.new(MockEngine::demo);
 			let mut panel = EffectLibraryPanel::new(engine, window, cx);
@@ -542,7 +560,7 @@ mod tests {
 	/// Clicking a group header is what writes the state: the group's rows
 	/// leave the render and the collapsed key lands in the persisted
 	/// config.
-	#[gpui::test]
+	#[gpui_kit::test]
 	async fn clicking_a_group_header_collapses_and_persists_it(cx: &mut TestAppContext) {
 		let _guard = collapsed_config_lock();
 
@@ -558,7 +576,10 @@ mod tests {
 			.type_id
 			.clone();
 
-		cx.update(|cx| cx.init_colors());
+		cx.update(|cx| {
+			gpui_kit::init(cx);
+			cx.init_colors();
+		});
 		let window = cx.open_window(size(px(400.0), px(600.0)), |window, cx| {
 			let engine = cx.new(MockEngine::demo);
 			EffectLibraryPanel::new(engine, window, cx)
@@ -566,7 +587,7 @@ mod tests {
 		cx.run_until_parked();
 		let visual = VisualTestContext::from_window(window.into(), cx).into_mut();
 		visual.update(|window, cx| {
-			window.draw(cx).clear();
+			window.draw(cx).clear(cx);
 		});
 
 		let header = visual
@@ -585,7 +606,7 @@ mod tests {
 
 		visual.simulate_click(center, Modifiers::default());
 		visual.update(|window, cx| {
-			window.draw(cx).clear();
+			window.draw(cx).clear(cx);
 		});
 
 		assert!(

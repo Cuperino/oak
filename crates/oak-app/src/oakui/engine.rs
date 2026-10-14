@@ -35,15 +35,15 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use gpui::effect_stack::{EffectId, EffectStackDataSource, EffectStackEvent};
-use gpui::node_graph::{NodeGraphDataSource, NodeGraphEvent, NodeId};
-use gpui::timeline::{
+use crate::widgets::effect_stack::{EffectId, EffectStackDataSource, EffectStackEvent};
+use crate::widgets::node_graph::{NodeGraphDataSource, NodeGraphEvent, NodeId};
+use crate::widgets::timeline::{
 	ClipId, Frame, FrameRate, TimelineDataSource, TimelineEvent, TrackData, TrackKind,
 };
-use gpui::{App, Context, Entity, Pixels, Point, Rgba, RenderImage, SharedString};
-use gpui_widgets::audio_meter::AudioMeterDataSource;
-use gpui_widgets::project_explorer::ProjectDataSource;
-use gpui_widgets::viewer::PlaybackClock;
+use gpui_kit::{App, Context, Entity, Pixels, Point, Rgba, RenderImage, SharedString};
+use crate::widgets::audio_meter::AudioMeterDataSource;
+use crate::widgets::project_explorer::ProjectDataSource;
+use crate::widgets::viewer::PlaybackClock;
 
 pub use super::scopes::ScopeData;
 
@@ -227,7 +227,7 @@ pub fn node_category_key(category: oak_node::node::Category) -> Option<&'static 
 ///
 /// Implementations own the "engine" side of the app: project state, the
 /// current sequence, and the transport. Query methods are pure reads;
-/// mutating methods take a gpui [`Context`](gpui::Context) so the backend can
+/// mutating methods take a gpui [`Context`](gpui_kit::Context) so the backend can
 /// update its observable entities (clocks, models) and notify them.
 pub trait EngineGateway: Sized {
 	/// The currently open project, or `None` before any project is opened.
@@ -246,23 +246,23 @@ pub trait EngineGateway: Sized {
 	/// Open a project file. The backend loads it and becomes the source of
 	/// truth for [`project`](EngineGateway::project) /
 	/// [`current_sequence`](EngineGateway::current_sequence).
-	fn open_project(&mut self, path: PathBuf, cx: &mut gpui::Context<Self>);
+	fn open_project(&mut self, path: PathBuf, cx: &mut gpui_kit::Context<Self>);
 
 	/// Seek `monitor` to `frame` (clamped to the sequence).
-	fn request_frame(&mut self, monitor: Monitor, frame: Frame, cx: &mut gpui::Context<Self>);
+	fn request_frame(&mut self, monitor: Monitor, frame: Frame, cx: &mut gpui_kit::Context<Self>);
 
 	/// Start playback on `monitor`.
-	fn play(&mut self, monitor: Monitor, cx: &mut gpui::Context<Self>);
+	fn play(&mut self, monitor: Monitor, cx: &mut gpui_kit::Context<Self>);
 
 	/// Pause playback on `monitor`, leaving the playhead where it is.
-	fn pause(&mut self, monitor: Monitor, cx: &mut gpui::Context<Self>);
+	fn pause(&mut self, monitor: Monitor, cx: &mut gpui_kit::Context<Self>);
 
 	/// Step `monitor`'s playhead by `delta` frames (negative steps back).
-	fn step(&mut self, monitor: Monitor, delta: i64, cx: &mut gpui::Context<Self>);
+	fn step(&mut self, monitor: Monitor, delta: i64, cx: &mut gpui_kit::Context<Self>);
 
 	/// Advance the playback clocks by one wall-clock tick. Called on a
 	/// periodic timer while any monitor is playing.
-	fn tick(&mut self, cx: &mut gpui::Context<Self>);
+	fn tick(&mut self, cx: &mut gpui_kit::Context<Self>);
 }
 
 /// The transport clock type an engine drives its monitors with.
@@ -287,7 +287,7 @@ struct EyedropperMailbox {
 	result: Option<Rgba>,
 }
 
-impl gpui::Global for EyedropperMailbox {}
+impl gpui_kit::Global for EyedropperMailbox {}
 
 /// The full app-facing engine surface: the gateway plus every widget
 /// data-source trait and the app-only operations (clocks, viewer frames,
@@ -1680,10 +1680,10 @@ pub struct ExportSession {	/// The event receiver (the background thread's sende
 mod tests {
 	use super::*;
 	use crate::oakui::MockClock;
-	use gpui::effect_stack::EffectData;
-	use gpui::{AppContext as _, TestAppContext};
-	use gpui::node_graph::PortId;
-	use gpui_widgets::project_explorer::ProjectEntry;
+	use crate::widgets::effect_stack::EffectData;
+	use gpui_kit::{AppContext as _, TestAppContext};
+	use crate::widgets::node_graph::PortId;
+	use crate::widgets::project_explorer::ProjectEntry;
 
 	#[test]
 	fn node_category_key_covers_every_category() {
@@ -1875,7 +1875,7 @@ mod tests {
 		}
 	}
 
-	#[gpui::test]
+	#[gpui_kit::test]
 	async fn app_engine_defaults_degrade_gracefully(cx: &mut TestAppContext) {
 		cx.update(|app| {
 			let engine = app.new(NullEngine::create);
@@ -2008,7 +2008,7 @@ mod tests {
 
 	/// The remaining `AppEngine` defaults: project/library/proxy/sync/
 	/// multicam/eyedropper fallbacks that a minimal engine must survive.
-	#[gpui::test]
+	#[gpui_kit::test]
 	async fn app_engine_remaining_defaults_are_safe(cx: &mut TestAppContext) {
 		let _lock = crate::oakui::graphops::test_lock();
 		cx.update(|app| {
@@ -2115,7 +2115,7 @@ mod tests {
 				// Eyedropper mailbox round trip.
 				engine.set_eyedropper_armed(true, cx);
 				assert!(engine.eyedropper_armed(cx));
-				engine.eyedropper_picked(gpui::rgba(0x11223344), cx);
+				engine.eyedropper_picked(gpui_kit::rgba(0x11223344), cx);
 				assert!(engine.take_eyedropper_result(cx).is_some());
 				engine.set_eyedropper_armed(false, cx);
 				assert!(engine.take_eyedropper_result(cx).is_none());

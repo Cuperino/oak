@@ -14,128 +14,113 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-//! The app's text input component.
+//! The app's text input component: gpui-kit's [`Input`] with the app
+//! theme's colors applied.
 //!
-//! Wraps the gpui_elements editing engine (IME composition, caret,
-//! selection, undo history) with the app's own presentation rules:
+//! The gpui-kit input engine (IME composition, caret, selection, undo
+//! history, editing key bindings) comes fully wired — `gpui_kit::init`
+//! installs the keymap, so there is nothing app-side to install (the
+//! fork's `EditableText` engine needed a separate binding install step;
+//! that is gone).
 //!
-//! - **Theme colors**: text, caret, selection, placeholder and the IME
-//!   marked underline all come from `App::default_colors` (the app theme)
-//!   instead of the engine's hard-coded defaults. The field's text color
-//!   is applied through a wrapping `div().text_color(…)` refinement so
-//!   the engine's run layout (which reads `Window::text_style`) picks it
-//!   up.
-//! - **Editing key bindings**: [`install_text_input_bindings`] installs
-//!   the engine's Backspace/Delete/arrow/Home/End/select-all bindings
-//!   into the app keymap, scoped to the `EditableText` key context. The
-//!   app previously never installed them, so every field accepted IME
-//!   text but every editing key was a no-op.
-//!
-//! IME text insertion itself flows through the engine's
-//! `EntityInputHandler` (registered by the element via
-//! `Window::handle_input`), so composing text, marked ranges and the
-//! candidate-window position all work once the field is focused.
+//! The wrapper exists to keep the call-site shape the app already has
+//! (`text_input(id, cx).state(…)`) and to paint the field in the app
+//! theme (`App::default_colors`) rather than the component theme.
 
-use std::sync::Arc;
-
-use gpui::{
-	colors::{Colors, DefaultColors},
-	div, App, Div, ElementId, Hsla, IntoElement, ParentElement, Styled, WeakEntity,
+use gpui_kit::base::input::InputState;
+use gpui_kit::component::input::Input;
+use gpui_kit::component::Sizable as _;
+use gpui_kit::{
+	colors::DefaultColors, div, App, AppContext, ElementId, Entity, IntoElement,
+	InteractiveElement, ParentElement, RenderOnce, Styled, WeakEntity, Window,
 };
-use gpui_elements::editable_text::actions::{default_bindings, DEFAULT_INPUT_CONTEXT};
-use gpui_elements::editable_text::{EditableTextElement, EditableTextState};
 
-/// Install the text-input editing key bindings into the app keymap.
-///
-/// The editing keys (Backspace, Delete, arrows, Home/End, select-all,
-/// …) are gpui actions bound to the `EditableText` key context; without
-/// them the fields accept IME text but every editing key is a no-op.
-/// Call once at app startup, alongside the registry key bindings.
-pub fn install_text_input_bindings(cx: &mut App) {
-	cx.bind_keys(default_bindings().as_keybindings(Some(DEFAULT_INPUT_CONTEXT)));
-}
+/// A no-op kept for source compatibility: gpui-kit's input keymap is
+/// installed by `gpui_kit::init`, so there is nothing to do here.
+pub fn install_text_input_bindings(_cx: &mut App) {}
 
 /// The app's text input component.
 ///
-/// A `div` that carries the theme text color refinement around the
-/// gpui_elements editing element, with the theme's selection / caret /
-/// placeholder / IME-marked colors applied directly. Build with
-/// [`text_input`], then chain the engine's element options (`.state`,
-/// `.accepts_input`, …).
+/// Wraps gpui-kit's [`Input`], defaulting to the borderless, backgroundless
+/// appearance (the app's fields draw their own chrome) in the app theme's
+/// text color. Build with [`text_input`], then chain `.state(..)`, …
+#[derive(IntoElement)]
 pub struct TextInput {
-	element: EditableTextElement,
-	text_color: Hsla,
-	selection: Hsla,
-	caret: Hsla,
-	placeholder: Hsla,
+	id: ElementId,
+	state: Option<WeakEntity<InputState>>,
+	accepts_input: bool,
+	appearance: bool,
 }
 
 impl TextInput {
-	/// Bind the field to an existing editing state entity (the caller
-	/// reads the value / subscribes to changes through it).
-	pub fn state(mut self, state: WeakEntity<EditableTextState>) -> Self {
-		self.element = self.element.state(state);
+	/// Bind the field to an existing input state entity (the caller reads
+	/// the value / subscribes to changes through it).
+	pub fn state(mut self, state: WeakEntity<InputState>) -> Self {
+		self.state = Some(state);
 		self
 	}
 
-	/// Whether the field accepts input at all (disabled fields render
-	/// without the input handler attached).
+	/// Whether the field accepts input at all (a disabled field renders
+	/// read-only).
 	pub fn accepts_input(mut self, enabled: bool) -> Self {
-		self.element = self.element.accepts_input(enabled);
+		self.accepts_input = enabled;
 		self
 	}
 
-	/// Placeholder shown while the field is empty.
-	pub fn placeholder(mut self, text: impl Into<gpui::SharedString>) -> Self {
-		self.element = self.element.placeholder(text);
+	/// Draw the component chrome (border + background); off by default.
+	pub fn appearance(mut self, appearance: bool) -> Self {
+		self.appearance = appearance;
 		self
 	}
 }
 
-impl IntoElement for TextInput {
-	type Element = Div;
-
-	fn into_element(self) -> Div {
-		let Self {
-			element,
-			text_color,
-			selection,
-			caret,
-			placeholder,
-		} = self;
-		div()
-			// The text_color refinement is pushed onto the window text
-			// style during paint, so the engine's run layout (which reads
-			// `Window::text_style().color`) renders in the theme text
-			// color — the field reads like every other label in the app.
-			.text_color(text_color)
-			.child(
-				element
-					.placeholder_color(placeholder)
-					.selection_color(selection)
-					.caret_color(caret)
-					.marked_color(text_color),
-			)
+impl RenderOnce for TextInput {
+	fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
+		let colors = cx.default_colors().clone();
+		let base = div().id(self.id).text_color(colors.text);
+		let Some(state) = self.state.and_then(|state| state.upgrade()) else {
+			return base;
+		};
+		base.child(
+			Input::new(&state)
+				.small()
+				.appearance(self.appearance)
+				.disabled(!self.accepts_input),
+		)
 	}
 }
 
 /// Build the app's text input with the current theme's colors.
-///
-/// `cx` is used for the theme colors; the returned component needs no
-/// further styling to match the rest of the UI.
-pub fn text_input(id: impl Into<ElementId>, cx: &App) -> TextInput {
-	let colors = theme_colors(cx);
+pub fn text_input(id: impl Into<ElementId>, _cx: &App) -> TextInput {
 	TextInput {
-		element: gpui_elements::editable_text::text_input(id),
-		text_color: colors.text.into(),
-		selection: colors.selected.into(),
-		caret: colors.text.into(),
-		placeholder: colors.disabled.into(),
+		id: id.into(),
+		state: None,
+		accepts_input: true,
+		appearance: false,
 	}
 }
 
-/// The theme colors for the app (falls back to the defaults when no
-/// theme has been applied yet).
-fn theme_colors(cx: &App) -> Arc<Colors> {
-	cx.default_colors().clone()
+/// Set an input's text from a windowless context (event subscriptions
+/// and render passes have no `&mut Window`).
+///
+/// The update is deferred to the end of the current effect cycle:
+/// calling `update_window` directly from inside window event dispatch
+/// or a render pass fails silently (the window is already borrowed),
+/// which used to leave the field stale when e.g. the colour picker's
+/// palette refreshed its hex field mid-click. The deferred closure
+/// runs once the window is back in the app map and routes the set
+/// through the app's first window (the dialogs and panels using this
+/// are single-window UI). `Context<T>` callers pass `cx` straight
+/// through (DerefMut coercion).
+pub fn set_input_text(state: &Entity<InputState>, text: &str, cx: &mut App) {
+	let state = state.clone();
+	let text = text.to_string();
+	cx.defer(move |cx| {
+		let Some(window) = cx.windows().first().copied() else {
+			return;
+		};
+		let _ = cx.update_window(window, |_, window, cx| {
+			state.update(cx, |state, cx| state.set_value(text, window, cx));
+		});
+	});
 }

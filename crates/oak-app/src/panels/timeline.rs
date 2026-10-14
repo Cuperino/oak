@@ -15,7 +15,7 @@
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 //! The timeline panel (时间线): the design's 31px toolbar (tools, snap
-//! toggle) above the full-width [`TimelineView`](gpui::timeline::TimelineView)
+//! toggle) above the full-width [`TimelineView`](crate::widgets::timeline::TimelineView)
 //! over the engine's sequence model.
 //!
 //! # Layout (fixed 2026-08)
@@ -43,17 +43,19 @@ use crate::oakui::component::controls::ValueKind;
 use crate::oakui::component::controls::{CheckBox, CheckBoxEvent, CheckState};
 use crate::oakui::component::controls::{Slider, SliderEvent, SliderModel};
 use crate::oakui::component::menu::{Menu, MenuItem};
-use gpui::colors::DefaultColors;
-use gpui::dock::{DockPanel, PanelEvent};
-use gpui::timeline::{
+use gpui_kit::colors::DefaultColors;
+use gpui_kit::component::dock::{BasePanel, Panel, PanelEvent};
+use gpui_kit::{FocusHandle, Focusable};
+use crate::panels::PanelFocused;
+use crate::widgets::timeline::{
 	ClipData, ClipId, Frame, TimelineEvent, TimelineHit, TimelineTool, TimelineView, TrackData,
 	TrackKind, HEADER_WIDTH, MIN_TRACK_HEIGHT, RULER_HEIGHT,
 };
-use gpui::{div, img, prelude::*, px, Context, Entity, MouseButton, Pixels, Point, Window};
-use gpui::{AnyElement, App, ClickEvent, DragMoveEvent, EventEmitter, Render, SharedString};
-use gpui_widgets::project_explorer::FootageDrag;
-use gpui_widgets::tooltip::tooltip_view;
-use gpui_widgets::viewer::PlaybackClock;
+use gpui_kit::{div, img, prelude::*, px, Context, Entity, MouseButton, Pixels, Point, Window};
+use gpui_kit::{App, ClickEvent, DragMoveEvent, EventEmitter, Render, SharedString};
+use crate::widgets::project_explorer::FootageDrag;
+use crate::widgets::tooltip::tooltip_view;
+use crate::widgets::viewer::PlaybackClock;
 
 use crate::actions::ActionId;
 use crate::i18n;
@@ -62,7 +64,6 @@ use crate::oakui::component::menu::{ContextMenuHandle, ContextMenuTriggered};
 use crate::oakui::icons;
 use crate::oakui::{AppEngine, Monitor};
 use crate::panels::commands::{self as panel_commands, PanelCommandHandler};
-use crate::panels::ids::TIMELINE;
 
 /// Toolbar height, per the design (31px).
 const TOOLBAR_HEIGHT: f32 = 31.0;
@@ -88,6 +89,9 @@ const TOOLS: [(&str, &str); 8] = [
 
 /// The timeline panel.
 pub struct TimelinePanel<E: AppEngine> {
+	/// The panel's focus handle (the dock's zoom/focus and the
+	/// shell's focused-panel routing need it).
+	focus_handle: FocusHandle,
 	timeline: Entity<TimelineView<E>>,
 	engine: Entity<E>,
 	zoom: Entity<Slider>,
@@ -198,6 +202,7 @@ impl<E: AppEngine> TimelinePanel<E> {
 		.detach();
 
 		Self {
+			focus_handle: cx.focus_handle(),
 			timeline,
 			engine,
 			zoom,
@@ -449,7 +454,7 @@ impl<E: AppEngine> TimelinePanel<E> {
 	/// length in sequence frames).
 	fn update_effect_drop(
 		&mut self,
-		event: &DragMoveEvent<gpui::effect_stack::LibraryEffectDrag>,
+		event: &DragMoveEvent<crate::widgets::effect_stack::LibraryEffectDrag>,
 		cx: &mut Context<Self>,
 	) {
 		let now = event.event.position - event.bounds.origin;
@@ -480,7 +485,7 @@ impl<E: AppEngine> TimelinePanel<E> {
 	/// ignored.
 	fn finish_effect_drop(
 		&mut self,
-		drag: &gpui::effect_stack::LibraryEffectDrag,
+		drag: &crate::widgets::effect_stack::LibraryEffectDrag,
 		cx: &mut Context<Self>,
 	) {
 		let Some(target) = self.effect_drop.take() else {
@@ -1087,8 +1092,8 @@ impl<E: AppEngine> Render for TimelinePanel<E> {
 			// dock re-emits this as `DockEvent::PanelFocused`, which the
 			// shell uses to route focused-panel commands).
 			.on_mouse_down(MouseButton::Left, {
-				cx.listener(|_this, _event: &gpui::MouseDownEvent, _window, cx| {
-					cx.emit(PanelEvent::Focused);
+				cx.listener(|_this, _event: &gpui_kit::MouseDownEvent, _window, cx| {
+					cx.emit(PanelFocused);
 				})
 			})
 			.child(toolbar)
@@ -1122,7 +1127,7 @@ impl<E: AppEngine> Render for TimelinePanel<E> {
 							// standalone generator clips).
 							.on_drag_move(cx.listener(
 								|this,
-								 event: &DragMoveEvent<gpui::effect_stack::LibraryEffectDrag>,
+								 event: &DragMoveEvent<crate::widgets::effect_stack::LibraryEffectDrag>,
 								 _window,
 								 cx| {
 									this.update_effect_drop(event, cx);
@@ -1130,7 +1135,7 @@ impl<E: AppEngine> Render for TimelinePanel<E> {
 							))
 							.on_drop(cx.listener(
 								|this,
-								 drag: &gpui::effect_stack::LibraryEffectDrag,
+								 drag: &crate::widgets::effect_stack::LibraryEffectDrag,
 								 _window,
 								 cx| {
 									this.finish_effect_drop(drag, cx);
@@ -1170,7 +1175,7 @@ impl<E: AppEngine> Render for TimelinePanel<E> {
 											.rounded_sm()
 											.border_1()
 											.border_color(colors.selected)
-											.bg(gpui::Rgba {
+											.bg(gpui_kit::Rgba {
 												a: 0.35,
 												..colors.selected
 											})
@@ -1211,17 +1216,23 @@ pub struct FootageDropNeedsSequence {
 
 impl<E: AppEngine> EventEmitter<FootageDropNeedsSequence> for TimelinePanel<E> {}
 
-impl<E: AppEngine> DockPanel for TimelinePanel<E> {
-	fn panel_id(&self) -> gpui::dock::PanelId {
-		TIMELINE
-	}
+impl<E: AppEngine> EventEmitter<PanelFocused> for TimelinePanel<E> {}
 
-	fn title(&self, _cx: &App) -> SharedString {
-		i18n::tr("panel.timeline").into()
+impl<E: AppEngine> Focusable for TimelinePanel<E> {
+	fn focus_handle(&self, _cx: &App) -> FocusHandle {
+		self.focus_handle.clone()
 	}
+}
 
-	fn tab_content(&self, _cx: &App) -> AnyElement {
-		div().child(i18n::tr("panel.timeline")).into_any_element()
+impl<E: AppEngine> BasePanel for TimelinePanel<E> {
+	fn panel_name(&self) -> &'static str {
+		crate::panels::ids::TIMELINE
+	}
+}
+
+impl<E: AppEngine> Panel for TimelinePanel<E> {
+	fn title(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+		i18n::tr("panel.timeline")
 	}
 }
 
@@ -1532,9 +1543,9 @@ mod tests {
 	use super::*;
 	use crate::oakui::engine::EngineGateway;
 	use crate::oakui::MockEngine;
-	use gpui::effect_stack::LibraryEffectDrag;
-	use gpui::timeline::{FrameRange, TimelineDataSource};
-	use gpui::StatefulInteractiveElement;
+	use crate::widgets::effect_stack::LibraryEffectDrag;
+	use crate::widgets::timeline::{FrameRange, TimelineDataSource};
+	use gpui_kit::StatefulInteractiveElement;
 
 	/// The empty ghost for the test drag sources.
 	struct DropGhost;
@@ -1590,7 +1601,7 @@ mod tests {
 				.child(self.panel.clone())
 		}
 	}
-	use gpui::{px, size, Hsla, TestAppContext, VisualTestContext};
+	use gpui_kit::{px, size, Hsla, TestAppContext, VisualTestContext};
 
 	/// Builds a `TimelinePanel` in a window of the given logical size and
 	/// returns a `VisualTestContext` for bounds assertions.
@@ -1602,7 +1613,10 @@ mod tests {
 		&'static mut VisualTestContext,
 		Entity<TimelinePanel<MockEngine>>,
 	) {
-		cx.update(|cx| cx.init_colors());
+		cx.update(|cx| {
+			gpui_kit::init(cx);
+			cx.init_colors();
+		});
 		let window = cx.open_window(size(px(width), px(height)), |window, cx| {
 			let engine = cx.new(crate::oakui::MockEngine::demo);
 			let timeline = cx.new(|cx| TimelineView::new(engine.clone(), window, cx).zoom(2.0));
@@ -1614,11 +1628,35 @@ mod tests {
 		(cx, panel)
 	}
 
+	/// The toolbar's zoom slider tracks the pointer: press+drag right raises
+	/// the zoom (regression: the track needs a debug selector for the test
+	/// to find it).
+	#[gpui_kit::test]
+	async fn zoom_slider_drag_tracks_the_cursor(cx: &mut TestAppContext) {
+		let (cx, panel) = panel_window(cx, 1600.0, 900.0);
+		cx.update(|window, cx| {
+			window.draw(cx).clear(cx);
+		});
+		let zoom = cx.read(|app| panel.read(app).zoom.clone());
+		let before = cx.read(|app| zoom.read(app).value().to_f64());
+		let bounds = cx
+			.debug_bounds("oak-slider-10")
+			.expect("zoom slider track rendered");
+		let y = bounds.origin.y + px(9.0);
+		cx.simulate_mouse_down(gpui_kit::point(bounds.left() + px(40.0), y), MouseButton::Left, gpui_kit::Modifiers::none());
+		cx.simulate_mouse_move(gpui_kit::point(bounds.left() + px(120.0), y), MouseButton::Left, gpui_kit::Modifiers::none());
+		cx.simulate_mouse_move(gpui_kit::point(bounds.left() + px(200.0), y), MouseButton::Left, gpui_kit::Modifiers::none());
+		cx.simulate_mouse_up(gpui_kit::point(bounds.left() + px(200.0), y), MouseButton::Left, gpui_kit::Modifiers::none());
+		cx.run_until_parked();
+		let after = cx.read(|app| zoom.read(app).value().to_f64());
+		assert!(after > before, "the drag moves the zoom: {before} -> {after}");
+	}
+
 	/// The toolbar row must sit entirely above the timeline body, the right
 	/// controls must sit to the right of the timeline canvas (never
 	/// overlapping it), and the controls slot must keep its fixed width — at
 	/// the default 1600×900 and down to ~1100px wide.
-	#[gpui::test]
+	#[gpui_kit::test]
 	async fn toolbar_ruler_and_right_controls_never_overlap(cx: &mut TestAppContext) {
 		for width in [1600.0, 1280.0, 1100.0] {
 			let (cx, _panel) = panel_window(cx, width, 900.0);
@@ -1675,7 +1713,7 @@ mod tests {
 
 	/// Resizing a window keeps the same invariants (the timeline body shrinks
 	/// while the toolbar and the right slot stay fixed).
-	#[gpui::test]
+	#[gpui_kit::test]
 	async fn resizing_keeps_toolbar_and_right_slot_fixed(cx: &mut TestAppContext) {
 		let (cx, _panel) = panel_window(cx, 1600.0, 900.0);
 
@@ -1700,11 +1738,11 @@ mod tests {
 	/// Right-clicking inside the timeline body opens the popup: the view
 	/// emits `ContextMenuRequested`, the panel assembles the matching menu
 	/// and the `ContextMenu` popup renders.
-	#[gpui::test]
+	#[gpui_kit::test]
 	async fn right_click_opens_the_context_menu(cx: &mut TestAppContext) {
 		let (cx, _panel) = panel_window(cx, 1600.0, 900.0);
 		cx.update(|window, cx| {
-			window.draw(cx).clear();
+			window.draw(cx).clear(cx);
 		});
 		assert!(
 			cx.debug_bounds("menu-popup").is_none(),
@@ -1714,14 +1752,14 @@ mod tests {
 		let canvas = cx
 			.debug_bounds("timeline-canvas")
 			.expect("timeline canvas rendered");
-		let click = gpui::point(
+		let click = gpui_kit::point(
 			canvas.origin.x + canvas.size.width * 0.5,
 			canvas.origin.y + canvas.size.height * 0.5,
 		);
-		cx.simulate_mouse_down(click, gpui::MouseButton::Right, gpui::Modifiers::none());
+		cx.simulate_mouse_down(click, gpui_kit::MouseButton::Right, gpui_kit::Modifiers::none());
 		cx.run_until_parked();
 		cx.update(|window, cx| {
-			window.draw(cx).clear();
+			window.draw(cx).clear(cx);
 		});
 
 		let popup = cx
@@ -1972,7 +2010,7 @@ mod tests {
 	/// Choosing "Add Adjustment Layer" from the empty-area menu lands the
 	/// demo's five-second layer on the video track under the cursor, at the
 	/// clicked frame and in a color of its own (§3.5).
-	#[gpui::test]
+	#[gpui_kit::test]
 	async fn empty_area_menu_adds_an_adjustment_layer_at_the_clicked_frame(
 		cx: &mut TestAppContext,
 	) {
@@ -1997,7 +2035,7 @@ mod tests {
 		cx.update(|_window, cx| {
 			panel.update(cx, |panel, cx| {
 				panel.open_context_menu(
-					gpui::point(px(10.0), px(10.0)),
+					gpui_kit::point(px(10.0), px(10.0)),
 					TimelineHit::Empty {
 						track: 0,
 						frame: Frame(50),
@@ -2082,7 +2120,7 @@ mod tests {
 
 	/// The zoom/height sliders and the snap checkbox drive the view/engine
 	/// through the panel's subscriptions.
-	#[gpui::test]
+	#[gpui_kit::test]
 	async fn slider_and_snap_events_update_the_view_and_engine(cx: &mut TestAppContext) {
 		use crate::oakui::component::controls::SliderValue;
 		let (cx, panel) = panel_window(cx, 1280.0, 720.0);
@@ -2135,12 +2173,12 @@ mod tests {
 
 	/// Every `TimelineHit` variant opens its matching context menu; an
 	/// unselected right-clicked clip is selected first.
-	#[gpui::test]
+	#[gpui_kit::test]
 	async fn context_menus_open_for_every_hit_kind(cx: &mut TestAppContext) {
 		let (cx, panel) = panel_window(cx, 1600.0, 900.0);
 		cx.update(|_window, app| {
 			panel.update(app, |panel, cx| {
-				let position = gpui::point(px(20.0), px(20.0));
+				let position = gpui_kit::point(px(20.0), px(20.0));
 
 				panel.open_context_menu(position, TimelineHit::Clip(ClipId(10)), cx);
 				assert!(
@@ -2182,7 +2220,7 @@ mod tests {
 
 	/// The local (non-registry) menu items route to the engine; missing
 	/// targets and unknown ids are benign no-ops.
-	#[gpui::test]
+	#[gpui_kit::test]
 	async fn local_menu_items_route_to_the_engine(cx: &mut TestAppContext) {
 		// The Multi-Cam item runs real undoable commands; serialize with the
 		// graph tests sharing the global undo stack.
@@ -2317,7 +2355,7 @@ mod tests {
 
 	/// The panel command trait routes transport, in/out points, selection and
 	/// editing commands to the engine without panicking.
-	#[gpui::test]
+	#[gpui_kit::test]
 	async fn panel_commands_cover_transport_edit_and_view(cx: &mut TestAppContext) {
 		let (cx, panel) = panel_window(cx, 1280.0, 720.0);
 
@@ -2436,7 +2474,7 @@ mod tests {
 
 	/// `delete_selection` ignores an empty selection and removes the selected
 	/// clips through the engine; the work-area commits follow the playhead.
-	#[gpui::test]
+	#[gpui_kit::test]
 	async fn delete_selection_and_workarea_paths(cx: &mut TestAppContext) {
 		let (cx, panel) = panel_window(cx, 1280.0, 720.0);
 
@@ -2488,7 +2526,7 @@ mod tests {
 
 	/// `finish_footage_drop` and `finish_effect_drop` route their pending
 	/// targets; a missing target and an unusable effect are benign no-ops.
-	#[gpui::test]
+	#[gpui_kit::test]
 	async fn finished_drops_route_to_the_engine(cx: &mut TestAppContext) {
 		let (cx, panel) = panel_window(cx, 1280.0, 720.0);
 
@@ -2521,16 +2559,16 @@ mod tests {
 		});
 
 		let generator =
-			gpui::effect_stack::LibraryEffectDrag {
+			crate::widgets::effect_stack::LibraryEffectDrag {
 				type_id: "org.olivevideoeditor.Olive.solidgenerator".into(),
 				name: "Solid".into(),
 			};
 		let transition =
-			gpui::effect_stack::LibraryEffectDrag {
+			crate::widgets::effect_stack::LibraryEffectDrag {
 				type_id: "org.olivevideoeditor.Olive.transition".into(),
 				name: "Dissolve".into(),
 			};
-		let non_generator = gpui::effect_stack::LibraryEffectDrag {
+		let non_generator = crate::widgets::effect_stack::LibraryEffectDrag {
 			type_id: "org.olivevideoeditor.Olive.blur".into(),
 			name: "Blur".into(),
 		};
@@ -2583,14 +2621,14 @@ mod tests {
 
 	/// `resolve_drop_point` maps the cursor to track + frame, clamps above
 	/// the ruler / below the tracks and falls back on an empty timeline.
-	#[gpui::test]
+	#[gpui_kit::test]
 	async fn resolve_drop_point_maps_and_clamps(cx: &mut TestAppContext) {
 		let (cx, panel) = panel_window(cx, 1280.0, 720.0);
 
 		assert_eq!(
 			cx.read(|app| panel
 				.read(app)
-				.resolve_drop_point(gpui::point(px(200.0), px(10.0)), app)),
+				.resolve_drop_point(gpui_kit::point(px(200.0), px(10.0)), app)),
 			None,
 			"above the ruler there is no clip area"
 		);
@@ -2601,7 +2639,7 @@ mod tests {
 			.read(|app| {
 				panel
 					.read(app)
-					.resolve_drop_point(gpui::point(px(10.0), px(100.0)), app)
+					.resolve_drop_point(gpui_kit::point(px(10.0), px(100.0)), app)
 			})
 			.expect("below the ruler");
 		assert_eq!((kind, index), (TrackKind::Video, 1));
@@ -2612,7 +2650,7 @@ mod tests {
 			.read(|app| {
 				panel
 					.read(app)
-					.resolve_drop_point(gpui::point(px(600.0), px(4000.0)), app)
+					.resolve_drop_point(gpui_kit::point(px(600.0), px(4000.0)), app)
 			})
 			.expect("below the ruler");
 		assert_eq!((kind, index), (TrackKind::Audio, 3));
@@ -2627,7 +2665,7 @@ mod tests {
 					}
 				});
 				let (kind, index, _) = panel
-					.resolve_drop_point(gpui::point(px(600.0), px(100.0)), cx)
+					.resolve_drop_point(gpui_kit::point(px(600.0), px(100.0)), cx)
 					.expect("still below the ruler");
 				assert_eq!((kind, index), (TrackKind::Video, 0));
 			});
@@ -2636,7 +2674,7 @@ mod tests {
 
 	/// `zoom_timeline` and `nudge_track_height` scale the view and clamp the
 	/// engine's track heights to the slider range.
-	#[gpui::test]
+	#[gpui_kit::test]
 	async fn zoom_and_track_height_nudges(cx: &mut TestAppContext) {
 		let (cx, panel) = panel_window(cx, 1280.0, 720.0);
 		let before = cx.read(|app| panel.read(app).timeline.read(app).state.zoom);
@@ -2682,7 +2720,7 @@ mod tests {
 	/// The toolbar's tool buttons and trailing controls run their `on_click`
 	/// closures: tool selection, add-track buttons, zoom buttons and the
 	/// snap icon.
-	#[gpui::test]
+	#[gpui_kit::test]
 	async fn toolbar_buttons_switch_tools_and_route_actions(cx: &mut TestAppContext) {
 		let (cx, panel) = panel_window(cx, 1600.0, 900.0);
 		let toolbar = cx.debug_bounds("timeline-toolbar").expect("toolbar rendered");
@@ -2692,7 +2730,7 @@ mod tests {
 		// toolbar padding.
 		for index in 0..8 {
 			let x = toolbar.origin.x + px(8.0 + 32.0 * index as f32 + 12.0);
-			cx.simulate_click(gpui::point(x, y), gpui::Modifiers::none());
+			cx.simulate_click(gpui_kit::point(x, y), gpui_kit::Modifiers::none());
 			assert_eq!(
 				cx.read(|app| panel.read(app).timeline.read(app).tool()),
 				TimelineTool::from_index(index).unwrap(),
@@ -2701,8 +2739,8 @@ mod tests {
 		}
 		// Clicking the already-selected tool again hits the no-op guard.
 		cx.simulate_click(
-			gpui::point(toolbar.origin.x + px(8.0 + 7.0 * 32.0 + 12.0), y),
-			gpui::Modifiers::none(),
+			gpui_kit::point(toolbar.origin.x + px(8.0 + 7.0 * 32.0 + 12.0), y),
+			gpui_kit::Modifiers::none(),
 		);
 
 		// Walk the trailing controls: each hit routes through an `on_click`
@@ -2721,7 +2759,7 @@ mod tests {
 					panel.timeline.read(app).state.snap_enabled,
 				)
 			});
-			cx.simulate_click(gpui::point(x, y), gpui::Modifiers::none());
+			cx.simulate_click(gpui_kit::point(x, y), gpui_kit::Modifiers::none());
 			let (tracks_after, zoom_after, snap_after) = cx.read(|app| {
 				let panel = panel.read(app);
 				let engine = panel.engine.read(app);
@@ -2743,7 +2781,7 @@ mod tests {
 
 	/// The drop ghost renders (including the out-of-range row break), the
 	/// dock metadata is populated and a left click focuses the panel.
-	#[gpui::test]
+	#[gpui_kit::test]
 	async fn drop_ghost_and_dock_metadata(cx: &mut TestAppContext) {
 		let (cx, panel) = panel_window(cx, 1280.0, 720.0);
 
@@ -2759,7 +2797,7 @@ mod tests {
 			});
 		});
 		cx.update(|window, cx| {
-			window.draw(cx).clear();
+			window.draw(cx).clear(cx);
 		});
 		assert!(cx.debug_bounds("timeline-canvas").is_some());
 
@@ -2778,22 +2816,20 @@ mod tests {
 			});
 		});
 		cx.update(|window, cx| {
-			window.draw(cx).clear();
+			window.draw(cx).clear(cx);
 		});
 
 		// Dock metadata.
 		cx.update(|_window, app| {
 			let panel = panel.read(app);
-			assert_eq!(panel.panel_id(), crate::panels::ids::TIMELINE);
-			assert!(!panel.title(app).is_empty());
-			let _ = panel.tab_content(app);
+			assert_eq!(panel.panel_name(), crate::panels::ids::TIMELINE);
 		});
 
 		// A left click focuses the panel (the root's mouse-down handler).
 		cx.simulate_mouse_down(
-			gpui::point(px(640.0), px(400.0)),
-			gpui::MouseButton::Left,
-			gpui::Modifiers::none(),
+			gpui_kit::point(px(640.0), px(400.0)),
+			gpui_kit::MouseButton::Left,
+			gpui_kit::Modifiers::none(),
 		);
 	}
 
@@ -2801,16 +2837,16 @@ mod tests {
 	/// frame (a repaint between the events would consume the listeners).
 	fn dispatch_drag(
 		cx: &mut VisualTestContext,
-		start: gpui::Point<Pixels>,
-		hover: gpui::Point<Pixels>,
-		ruler: gpui::Point<Pixels>,
+		start: gpui_kit::Point<Pixels>,
+		hover: gpui_kit::Point<Pixels>,
+		ruler: gpui_kit::Point<Pixels>,
 	) {
 		cx.update(|window, cx| {
 			window.dispatch_event(
-				gpui::PlatformInput::MouseDown(gpui::MouseDownEvent {
+				gpui_kit::PlatformInput::MouseDown(gpui_kit::MouseDownEvent {
 					position: start,
-					modifiers: gpui::Modifiers::none(),
-					button: gpui::MouseButton::Left,
+					modifiers: gpui_kit::Modifiers::none(),
+					button: gpui_kit::MouseButton::Left,
 					click_count: 1,
 					first_mouse: false,
 				}),
@@ -2818,16 +2854,16 @@ mod tests {
 			);
 			let mut move_to = |position| {
 				window.dispatch_event(
-					gpui::PlatformInput::MouseMove(gpui::MouseMoveEvent {
+					gpui_kit::PlatformInput::MouseMove(gpui_kit::MouseMoveEvent {
 						position,
-						modifiers: gpui::Modifiers::none(),
-						pressed_button: Some(gpui::MouseButton::Left),
+						modifiers: gpui_kit::Modifiers::none(),
+						pressed_button: Some(gpui_kit::MouseButton::Left),
 					}),
 					cx,
 				);
 			};
 			// Past the drag threshold to start the drag.
-			move_to(start + gpui::point(px(6.0), px(0.0)));
+			move_to(start + gpui_kit::point(px(6.0), px(0.0)));
 			// Over the ruler first (no target yet, so the clear is a no-op),
 			// then hover the drop point, slide up to the ruler (clearing the
 			// target) and hover it again.
@@ -2836,10 +2872,10 @@ mod tests {
 			move_to(ruler);
 			move_to(hover);
 			window.dispatch_event(
-				gpui::PlatformInput::MouseUp(gpui::MouseUpEvent {
+				gpui_kit::PlatformInput::MouseUp(gpui_kit::MouseUpEvent {
 					position: hover,
-					modifiers: gpui::Modifiers::none(),
-					button: gpui::MouseButton::Left,
+					modifiers: gpui_kit::Modifiers::none(),
+					button: gpui_kit::MouseButton::Left,
 					click_count: 1,
 				}),
 				cx,
@@ -2849,9 +2885,12 @@ mod tests {
 
 	/// A full drag onto the timeline canvas resolves the drop target (and
 	/// clears it over the ruler), then routes the payload to the engine.
-	#[gpui::test]
+	#[gpui_kit::test]
 	async fn drag_gestures_resolve_targets_and_route_drops(cx: &mut TestAppContext) {
-		cx.update(|cx| cx.init_colors());
+		cx.update(|cx| {
+			gpui_kit::init(cx);
+			cx.init_colors();
+		});
 		let window = cx.open_window(size(px(1280.0), px(720.0)), |window, cx| {
 			let engine = cx.new(MockEngine::demo);
 			let timeline = cx.new(|cx| TimelineView::new(engine.clone(), window, cx).zoom(2.0));
@@ -2864,11 +2903,11 @@ mod tests {
 		let panel = cx.read(|app| host.read(app).panel.clone());
 
 		let canvas = cx.debug_bounds("timeline-canvas").expect("canvas rendered");
-		let hover = gpui::point(
+		let hover = gpui_kit::point(
 			canvas.left() + px(HEADER_WIDTH + 100.0),
 			canvas.top() + px(RULER_HEIGHT + 20.0),
 		);
-		let ruler = gpui::point(
+		let ruler = gpui_kit::point(
 			canvas.left() + px(HEADER_WIDTH + 100.0),
 			canvas.top() + px(10.0),
 		);
@@ -2928,11 +2967,14 @@ mod tests {
 
 	/// With no open sequence the footage drop is handed back to the shell and
 	/// the work-area helpers fall back to a one-frame sequence.
-	#[gpui::test]
+	#[gpui_kit::test]
 	async fn no_sequence_paths_use_the_fallbacks(cx: &mut TestAppContext) {
 		use std::cell::Cell;
 		use std::rc::Rc;
-		cx.update(|cx| cx.init_colors());
+		cx.update(|cx| {
+			gpui_kit::init(cx);
+			cx.init_colors();
+		});
 		let window = cx.open_window(size(px(1280.0), px(720.0)), |window, cx| {
 			let engine = cx.new(crate::oakui::RealEngine::create);
 			let timeline = cx.new(|cx| TimelineView::new(engine.clone(), window, cx).zoom(2.0));

@@ -20,11 +20,13 @@
 //! to its own model.
 
 use crate::oakui::component::menu::{Menu, MenuItem};
-use gpui::colors::DefaultColors;
-use gpui::dock::{DockPanel, PanelEvent};
-use gpui::effect_stack::{EffectCardKind, EffectId, EffectStackEvent, EffectStackView};
-use gpui::{
-	div, prelude::*, AnyElement, App, Context, Entity, EventEmitter, MouseButton, Render,
+use gpui_kit::colors::DefaultColors;
+use gpui_kit::component::dock::{BasePanel, Panel, PanelEvent};
+use gpui_kit::{FocusHandle, Focusable};
+use crate::panels::PanelFocused;
+use crate::widgets::effect_stack::{EffectCardKind, EffectId, EffectStackEvent, EffectStackView};
+use gpui_kit::{
+	div, prelude::*, App, Context, Entity, EventEmitter, MouseButton, Render,
 	SharedString, Window,
 };
 
@@ -33,11 +35,13 @@ use crate::oakui::effectchain::group_label;
 use crate::oakui::engine::EffectEntry;
 use crate::oakui::AppEngine;
 use crate::panels::commands::PanelCommandHandler;
-use crate::panels::ids::INSPECTOR;
 use crate::panels::ofx_params::OfxParamsView;
 
 /// The inspector / effect stack panel.
 pub struct InspectorPanel<E: AppEngine> {
+	/// The panel's focus handle (the dock's zoom/focus and the
+	/// shell's focused-panel routing need it).
+	focus_handle: FocusHandle,
 	stack: Entity<EffectStackView<E>>,
 	engine: Entity<E>,
 	/// An in-flight "add effect" flow: the stack insertion index carried
@@ -102,6 +106,7 @@ impl<E: AppEngine> InspectorPanel<E> {
 		let context_menu = ContextMenuHandle::new(Self::on_local_menu_item, window, cx);
 
 		Self {
+			focus_handle: cx.focus_handle(),
 			stack,
 			engine,
 			pending_add: None,
@@ -152,7 +157,7 @@ impl<E: AppEngine> InspectorPanel<E> {
 	fn render_add_menu(
 		&mut self,
 		index: usize,
-		colors: &gpui::colors::Colors,
+		colors: &gpui_kit::colors::Colors,
 		cx: &mut Context<Self>,
 	) -> impl IntoElement {
 		let effects = self.engine.read(cx).addable_effects();
@@ -178,7 +183,7 @@ impl<E: AppEngine> InspectorPanel<E> {
 							.pb_1()
 							.px_2()
 							.text_xs()
-							.font_weight(gpui::FontWeight(600.0))
+							.font_weight(gpui_kit::FontWeight(600.0))
 							.text_color(colors.disabled)
 							.child(label),
 					);
@@ -202,7 +207,7 @@ impl<E: AppEngine> InspectorPanel<E> {
 					.text_sm()
 					.child(name)
 					.on_click(
-						cx.listener(move |this, _event: &gpui::ClickEvent, _window, cx| {
+						cx.listener(move |this, _event: &gpui_kit::ClickEvent, _window, cx| {
 							this.pending_add = None;
 							engine.update(cx, |engine, cx| {
 								if let Err(err) = engine.add_effect(index, &type_id, cx) {
@@ -245,7 +250,7 @@ impl<E: AppEngine> InspectorPanel<E> {
 							.text_sm()
 							.child("✕")
 							.on_click(cx.listener(
-								move |this, _event: &gpui::ClickEvent, _window, cx| {
+								move |this, _event: &gpui_kit::ClickEvent, _window, cx| {
 									this.pending_add = None;
 									cx.notify();
 								},
@@ -317,15 +322,15 @@ impl<E: AppEngine> Render for InspectorPanel<E> {
 			// dock re-emits this as `DockEvent::PanelFocused`, which the
 			// shell uses to route focused-panel commands).
 			.on_mouse_down(MouseButton::Left, {
-				cx.listener(|_this, _event: &gpui::MouseDownEvent, _window, cx| {
-					cx.emit(PanelEvent::Focused);
+				cx.listener(|_this, _event: &gpui_kit::MouseDownEvent, _window, cx| {
+					cx.emit(PanelFocused);
 				})
 			})
 			// The stack widget has no right-click handling of its own; the
 			// panel opens a menu targeting the first effect card (the stack
 			// has no per-card pointer context yet).
 			.on_mouse_down(MouseButton::Right, {
-				cx.listener(|this, event: &gpui::MouseDownEvent, _window, cx| {
+				cx.listener(|this, event: &gpui_kit::MouseDownEvent, _window, cx| {
 					let target = this
 						.engine
 						.read(cx)
@@ -363,19 +368,23 @@ impl<E: AppEngine> EventEmitter<PanelEvent> for InspectorPanel<E> {}
 
 impl<E: AppEngine> EventEmitter<ContextMenuTriggered> for InspectorPanel<E> {}
 
-impl<E: AppEngine> DockPanel for InspectorPanel<E> {
-	fn panel_id(&self) -> gpui::dock::PanelId {
-		INSPECTOR
-	}
+impl<E: AppEngine> EventEmitter<PanelFocused> for InspectorPanel<E> {}
 
-	fn title(&self, _cx: &App) -> SharedString {
-		crate::i18n::tr("panel.inspector").into()
+impl<E: AppEngine> Focusable for InspectorPanel<E> {
+	fn focus_handle(&self, _cx: &App) -> FocusHandle {
+		self.focus_handle.clone()
 	}
+}
 
-	fn tab_content(&self, _cx: &App) -> AnyElement {
-		div()
-			.child(crate::i18n::tr("panel.inspector"))
-			.into_any_element()
+impl<E: AppEngine> BasePanel for InspectorPanel<E> {
+	fn panel_name(&self) -> &'static str {
+		crate::panels::ids::INSPECTOR
+	}
+}
+
+impl<E: AppEngine> Panel for InspectorPanel<E> {
+	fn title(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+		crate::i18n::tr("panel.inspector")
 	}
 }
 
@@ -498,14 +507,17 @@ mod tests {
 	}
 
 	use crate::oakui::MockEngine;
-	use gpui::{Modifiers, px, size, TestAppContext, VisualTestContext};
+	use gpui_kit::{Modifiers, px, size, TestAppContext, VisualTestContext};
 
 	/// The panel's context-menu routing (card menu target, every local
 	/// item, no-target guard), the pending add-menu render and the dock
 	/// metadata.
-	#[gpui::test]
+	#[gpui_kit::test]
 	async fn panel_context_and_add_menu_paths(cx: &mut TestAppContext) {
-		cx.update(|cx| cx.init_colors());
+		cx.update(|cx| {
+			gpui_kit::init(cx);
+			cx.init_colors();
+		});
 		let window = cx.open_window(size(px(420.0), px(500.0)), |window, cx| {
 			let engine = cx.new(MockEngine::demo);
 			InspectorPanel::new(engine, window, cx)
@@ -516,19 +528,17 @@ mod tests {
 
 		// Dock metadata.
 		cx.update(|_window, app| {
-			assert!(!panel.read(app).title(app).is_empty());
-			let _ = panel.read(app).tab_content(app);
-			assert_eq!(panel.read(app).panel_id(), INSPECTOR);
+			assert_eq!(panel.read(app).panel_name(), crate::panels::ids::INSPECTOR);
 		});
 
 		// Right click targets the first effect card and opens the card menu.
 		cx.simulate_mouse_down(
-			gpui::point(px(200.0), px(200.0)),
+			gpui_kit::point(px(200.0), px(200.0)),
 			MouseButton::Right,
 			Modifiers::none(),
 		);
 		cx.update(|window, cx| {
-			window.draw(cx).clear();
+			window.draw(cx).clear(cx);
 		});
 		assert!(
 			cx.debug_bounds("menu-popup").is_some(),
@@ -559,7 +569,7 @@ mod tests {
 		});
 		cx.run_until_parked();
 		cx.update(|window, cx| {
-			window.draw(cx).clear();
+			window.draw(cx).clear(cx);
 		});
 		// The add-menu list itself carries an element id but no debug
 		// selector; its group headers do, so the menu's presence is

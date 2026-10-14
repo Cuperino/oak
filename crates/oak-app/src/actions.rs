@@ -20,7 +20,7 @@
 //! `MenuShared` action system (`app/window/mainwindow/mainmenu.cpp`,
 //! `app/widget/menu/menushared.cpp`).
 //!
-//! Every entry pairs a gpui action (defined through the [`gpui::actions`]
+//! Every entry pairs a gpui action (defined through the [`gpui_kit::actions`]
 //! macro) with the C++ action's stable id string (`newproj`, `rippledelete`,
 //! `snapping`, … — kept for future shortcut-file compatibility), its i18n
 //! key, its default key(s) in gpui keystroke syntax (`secondary-` is the
@@ -41,7 +41,7 @@ use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::{Mutex, OnceLock};
 
-use gpui::{Action, KeyBinding, KeyBindingContextPredicate};
+use gpui_kit::{Action, KeyBinding, KeyBindingContextPredicate};
 
 // One macro call generates all three views of the registry, so they can
 // never drift apart: the gpui action structs, the `ActionId` enum and the
@@ -57,7 +57,7 @@ macro_rules! define_actions {
 			menu_id: $menu_id:expr
 		}
 	);* ;) => {
-		gpui::actions!(oak, [ $($name),* ]);
+		gpui_kit::actions!(oak, [ $($name),* ]);
 
 		/// The stable identity of every app action (registry index).
 		#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -377,7 +377,7 @@ pub fn key_bindings() -> Vec<KeyBinding> {
 				context.clone(),
 				false,
 				None,
-				&gpui::DummyKeyboardMapper,
+				&gpui_kit::DummyKeyboardMapper,
 			)
 			.unwrap_or_else(|_| panic!("invalid effective key {key:?} for {}", entry.cpp_id));
 			bindings.push(binding);
@@ -393,7 +393,7 @@ pub fn key_bindings() -> Vec<KeyBinding> {
 pub fn display_shortcut(action: ActionId) -> Option<String> {
 	let keys = effective_keys(action.entry());
 	let key = keys.first()?;
-	let keystroke = gpui::Keystroke::parse(key).expect("effective keys parse (tests enforce it)");
+	let keystroke = gpui_kit::Keystroke::parse(key).expect("effective keys parse (tests enforce it)");
 
 	// `secondary-` parses to `platform` on macOS and `control` elsewhere;
 	// the modifier renderers below follow the same split.
@@ -526,7 +526,7 @@ fn parse_shortcut_line(line: &str) -> Option<(String, Vec<String>)> {
 	let keys = if value.is_empty() {
 		Vec::new()
 	} else {
-		if gpui::Keystroke::parse(value).is_err() {
+		if gpui_kit::Keystroke::parse(value).is_err() {
 			return None;
 		}
 		vec![value.to_string()]
@@ -604,7 +604,7 @@ pub fn has_custom_shortcuts() -> bool {
 /// compare keys regardless of the `secondary-` vs `cmd-`/`super-`/`win-`
 /// spelling (the parser maps all of them to the same modifier bits).
 fn canonical_key(key: &str) -> Option<String> {
-	gpui::Keystroke::parse(key)
+	gpui_kit::Keystroke::parse(key)
 		.ok()
 		.map(|keystroke| keystroke.unparse())
 }
@@ -798,16 +798,16 @@ impl Tool {
 	/// `Edit`/`Transition`/`Add`/`Record`/`Hand` have no widget counterpart
 	/// (the widget's pointer tool covers them); those map to `None` and the
 	/// timeline keeps its previous tool.
-	pub const fn timeline_tool(self) -> Option<gpui::timeline::TimelineTool> {
+	pub const fn timeline_tool(self) -> Option<crate::widgets::timeline::TimelineTool> {
 		match self {
-			Tool::Pointer => Some(gpui::timeline::TimelineTool::Select),
-			Tool::TrackSelect => Some(gpui::timeline::TimelineTool::TrackSelect),
-			Tool::Ripple => Some(gpui::timeline::TimelineTool::Ripple),
-			Tool::Rolling => Some(gpui::timeline::TimelineTool::Roll),
-			Tool::Razor => Some(gpui::timeline::TimelineTool::Razor),
-			Tool::Slip => Some(gpui::timeline::TimelineTool::Slip),
-			Tool::Slide => Some(gpui::timeline::TimelineTool::Slide),
-			Tool::Zoom => Some(gpui::timeline::TimelineTool::Zoom),
+			Tool::Pointer => Some(crate::widgets::timeline::TimelineTool::Select),
+			Tool::TrackSelect => Some(crate::widgets::timeline::TimelineTool::TrackSelect),
+			Tool::Ripple => Some(crate::widgets::timeline::TimelineTool::Ripple),
+			Tool::Rolling => Some(crate::widgets::timeline::TimelineTool::Roll),
+			Tool::Razor => Some(crate::widgets::timeline::TimelineTool::Razor),
+			Tool::Slip => Some(crate::widgets::timeline::TimelineTool::Slip),
+			Tool::Slide => Some(crate::widgets::timeline::TimelineTool::Slide),
+			Tool::Zoom => Some(crate::widgets::timeline::TimelineTool::Zoom),
 			_ => None,
 		}
 	}
@@ -819,17 +819,17 @@ pub trait TimelineToolExt {
 	fn app_tool(self) -> Tool;
 }
 
-impl TimelineToolExt for gpui::timeline::TimelineTool {
+impl TimelineToolExt for crate::widgets::timeline::TimelineTool {
 	fn app_tool(self) -> Tool {
 		match self {
-			gpui::timeline::TimelineTool::Select => Tool::Pointer,
-			gpui::timeline::TimelineTool::TrackSelect => Tool::TrackSelect,
-			gpui::timeline::TimelineTool::Ripple => Tool::Ripple,
-			gpui::timeline::TimelineTool::Roll => Tool::Rolling,
-			gpui::timeline::TimelineTool::Razor => Tool::Razor,
-			gpui::timeline::TimelineTool::Slip => Tool::Slip,
-			gpui::timeline::TimelineTool::Slide => Tool::Slide,
-			gpui::timeline::TimelineTool::Zoom => Tool::Zoom,
+			crate::widgets::timeline::TimelineTool::Select => Tool::Pointer,
+			crate::widgets::timeline::TimelineTool::TrackSelect => Tool::TrackSelect,
+			crate::widgets::timeline::TimelineTool::Ripple => Tool::Ripple,
+			crate::widgets::timeline::TimelineTool::Roll => Tool::Rolling,
+			crate::widgets::timeline::TimelineTool::Razor => Tool::Razor,
+			crate::widgets::timeline::TimelineTool::Slip => Tool::Slip,
+			crate::widgets::timeline::TimelineTool::Slide => Tool::Slide,
+			crate::widgets::timeline::TimelineTool::Zoom => Tool::Zoom,
 		}
 	}
 }
@@ -878,7 +878,7 @@ mod tests {
 		for entry in REGISTRY {
 			for key in entry.default_keys {
 				assert!(
-					gpui::Keystroke::parse(key).is_ok(),
+					gpui_kit::Keystroke::parse(key).is_ok(),
 					"invalid keystroke {key:?} on {}",
 					entry.cpp_id
 				);
@@ -893,7 +893,7 @@ mod tests {
 		let mut seen = std::collections::HashMap::new();
 		for entry in REGISTRY {
 			for key in entry.default_keys {
-				let parsed = gpui::Keystroke::parse(key).unwrap();
+				let parsed = gpui_kit::Keystroke::parse(key).unwrap();
 				let canon = parsed.unparse();
 				let previous = seen.insert(canon.clone(), entry.cpp_id);
 				assert!(
@@ -956,8 +956,8 @@ mod tests {
 	#[test]
 	fn input_exclusion_predicate_stays_out_of_text_fields() {
 		let predicate = input_exclusion_predicate();
-		let text_context = gpui::KeyContext::parse("EditableText").unwrap();
-		let panel_context = gpui::KeyContext::parse("Timeline").unwrap();
+		let text_context = gpui_kit::KeyContext::parse("EditableText").unwrap();
+		let panel_context = gpui_kit::KeyContext::parse("Timeline").unwrap();
 		assert_eq!(
 			predicate.depth_of(&[text_context]),
 			None,

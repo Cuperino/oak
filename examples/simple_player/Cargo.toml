@@ -30,7 +30,6 @@ description = "Oak cross-crate integration example: renders the app shell to scr
 [dependencies]
 # test-support pulls the visual-test harness (VisualTestAppContext,
 # capture_screenshot) the example drives the shell with.
-gpui = { path = "../../gpui/crates/gpui", features = ["test-support"] }
-gpui_platform = { path = "../../gpui/crates/gpui_platform", features = ["test-support"] }
+gpui-kit = { version = "0.7.3", features = ["test-support"] }
 oak-app = { path = "../../crates/oak-app" }
 image = "0.25"
