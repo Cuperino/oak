@@ -12,11 +12,10 @@
 
 ## 通用前置条件
 
-- **git** —— 克隆时必须带子模块（`gpui/` 是子模块）：
+- **git** —— 克隆仓库：
   ```sh
-  git clone --recursive https://github.com/OakVideoEditorCommunity/oak.git
+  git clone https://github.com/OakVideoEditorCommunity/oak.git
   cd oak
-  # 已有克隆则：git submodule update --init --recursive
   ```
 - **Rust stable**（通过 [rustup](https://rustup.rs/) 安装；Windows 使用
   默认的 `x86_64-pc-windows-msvc` 工具链——见 Windows 章节）。
@@ -167,6 +166,5 @@ tooling/package/build-pkg.sh  # Arch Linux → .pkg.tar.zst
 - **Windows：测试启动即报 `STATUS_DLL_NOT_FOUND`** —— FFmpeg 运行时
   DLL 不在 `PATH` 里；把 `.cache\ffmpeg\bin` 加入 `PATH`（见 Windows
   章节）。
-- **`gpui/` 目录为空** —— `git submodule update --init --recursive`。
 - **Linux 测试开窗口卡死/失败** —— 使用 Linux 章节的 `xvfb-run`
   命令。

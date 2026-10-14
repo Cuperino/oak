@@ -128,7 +128,6 @@ git clone --recursive https://github.com/OakVideoEditorCommunity/oak.git
 cd oak
 ```
 
-> **Note:** Make sure to use `--recursive` to clone submodules, as Oak depends on several external libraries included as submodules.
 
 ### 2. Configure with CMake
 

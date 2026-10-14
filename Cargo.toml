@@ -19,16 +19,10 @@
 # in oak-worker, the module rlibs in oak-*) or examples/ (standalone
 # integration crates, each with its own Cargo.toml).
 #
-# gpui (the oak-gpui fork at gpui/) is excluded: it is a separate git
-# repository with its own workspace (resolver 3, edition 2024,
-# workspace.package/workspace.dependencies). Without the exclusion its
-# crates would be auto-included here via oak-app's path dependencies and
-# would inherit from THIS workspace's [workspace.package] (which lacks the
-# keys gpui expects). Excluded, each gpui crate resolves against gpui's own
-# workspace root, exactly as before the monorepo workspace existed.
+# crates/oakengine.bk is the legacy C++-era backup; not a package.
 [workspace]
 members = ["crates/*", "examples/*"]
-exclude = ["gpui", "crates/oakengine.bk"]
+exclude = ["crates/oakengine.bk"]
 # NOTE: oak-storage is a workspace member but NOT a default member (it
 # stays out of the default-members test matrix to keep `cargo test` at
 # the root fast; the app links it as a normal path dependency, so it

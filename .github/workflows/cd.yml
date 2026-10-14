@@ -112,10 +112,6 @@ jobs:
 
       - name: Checkout
         uses: actions/checkout@v7
-        with:
-          # gpui/ is a git submodule; its crates are workspace members of
-          # their own repo and build as path dependencies of oakapp.
-          submodules: true
 
       # Defender's real-time scanning slows the MSVC build down
       # badly; disable it for the job and keep exclusions as the fallback

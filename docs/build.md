@@ -13,11 +13,10 @@ macOS, Linux, and Windows. For the Chinese version see
 
 ## Prerequisites (all platforms)
 
-- **git** — clone with submodules (`gpui/` is a submodule):
+- **git** — clone the repository:
   ```sh
-  git clone --recursive https://github.com/OakVideoEditorCommunity/oak.git
+  git clone https://github.com/OakVideoEditorCommunity/oak.git
   cd oak
-  # or, on an existing clone: git submodule update --init --recursive
   ```
 - **Rust stable** via [rustup](https://rustup.rs/) (on Windows the default
   `x86_64-pc-windows-msvc` host toolchain — see the Windows section).
@@ -186,6 +185,5 @@ libraries; see `docs/project-storage.md` for what lands where.
 - **Windows: tests exit immediately with `STATUS_DLL_NOT_FOUND`** — the
   FFmpeg runtime DLLs are not on `PATH`; add `.cache\ffmpeg\bin` (see
   the Windows section).
-- **Empty `gpui/` directory** — `git submodule update --init --recursive`.
 - **Linux tests open windows and hang/fail** — use the `xvfb-run` line
   from the Linux section.

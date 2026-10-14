@@ -16,6 +16,8 @@
 
 //! Rational numbers with oakcore-compatible semantics.
 
+use std::ops::{Add, Sub, Mul, Div};
+
 /// The cap used by the C++ `reduce_fraction` oracle: it reduces against
 /// `INT_MAX` regardless of the wider integer width. We keep the same cap so
 /// that every value C++ can represent round-trips bit-for-bit.
@@ -385,7 +387,7 @@ impl Rational {
 	}
 }
 
-impl std::ops::Add for Rational {
+impl Add for Rational {
 	type Output = Rational;
 	fn add(self, rhs: Rational) -> Rational {
 		if self.is_minmax() || rhs.is_minmax() {
@@ -404,7 +406,7 @@ impl std::ops::Add for Rational {
 	}
 }
 
-impl std::ops::Sub for Rational {
+impl Sub for Rational {
 	type Output = Rational;
 	fn sub(self, rhs: Rational) -> Rational {
 		if self.is_minmax() || rhs.is_minmax() {
@@ -423,7 +425,7 @@ impl std::ops::Sub for Rational {
 	}
 }
 
-impl std::ops::Mul for Rational {
+impl Mul for Rational {
 	type Output = Rational;
 	fn mul(self, rhs: Rational) -> Rational {
 		if self.is_minmax() || rhs.is_minmax() {
@@ -442,7 +444,7 @@ impl std::ops::Mul for Rational {
 	}
 }
 
-impl std::ops::Div for Rational {
+impl Div for Rational {
 	type Output = Rational;
 	fn div(self, rhs: Rational) -> Rational {
 		if self.is_minmax() || rhs.is_minmax() {

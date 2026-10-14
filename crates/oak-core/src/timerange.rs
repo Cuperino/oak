@@ -133,6 +133,8 @@ impl TimeRange {
 /// Normalized (sorted, non-overlapping) list of ranges — mirrors
 /// `olive::core::TimeRangeList` including its merge-on-insert and
 /// subtraction semantics.
+
+// TODO: This struct should be replace as a Vec
 #[derive(Clone, Debug, Default)]
 pub struct TimeRangeList {
 	ranges: Vec<TimeRange>,
@@ -242,6 +244,8 @@ impl TimeRangeList {
 	/// Frame-accurate iteration helper: snap a time to the containing
 	/// frame grid of `timebase` (C++ TimeRangeListFrameIterator snap,
 	/// `k_floor` rounding).
+
+	// TODO: Since self carries no state relevant to a singal snap, this function should remove the self.
 	pub fn snap(&self, time: Rational, timebase: Rational) -> Rational {
 		let _ = self; // self carries no state relevant to a single snap
 		rational::snap_time_to_timebase(time, timebase)
