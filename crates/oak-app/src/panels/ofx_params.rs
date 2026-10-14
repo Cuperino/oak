@@ -221,6 +221,11 @@ impl<E: AppEngine> OfxParamsView<E> {
 			};
 			match &control.kind {
 				ControlKind::Slider(slider) => {
+					// Never re-sync mid-drag: the engine read-back would
+					// fight the pointer (the thumb stops following).
+					if slider.read(cx).is_dragging() {
+						continue;
+					}
 					let sv = slider_value(param);
 					let slider = slider.clone();
 					slider.update(cx, |slider, _| slider.set_value(sv));
