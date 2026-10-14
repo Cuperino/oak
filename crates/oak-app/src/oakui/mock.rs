@@ -497,6 +497,10 @@ pub struct MockEngine {
 	tracks: Vec<MockTrack>,
 	/// The effect stack cards.
 	effects: Vec<MockEffect>,
+	/// Recorded transition drops (track index, frame) for tests.
+	pub(crate) transition_drops: Vec<(usize, Frame)>,
+	/// Recorded effect drops on clips (clip id, type id) for tests.
+	pub(crate) effect_clip_drops: Vec<(u64, String)>,
 	/// Id allocator for effects added at runtime.
 	next_effect_id: u64,
 	/// Parameter-write attempts from the params view (`input_id` + value
@@ -865,6 +869,8 @@ impl MockEngine {
 					clips: vec![clip(14, 0, 480, 0, "配乐.flac", audio(0.62))],
 				},
 			],
+			transition_drops: Vec::new(),
+			effect_clip_drops: Vec::new(),
 			effects: vec![
 				MockEffect {
 					id: EffectId(0),
@@ -2574,14 +2580,41 @@ impl AppEngine for MockEngine {
 		Ok(())
 	}
 
+	fn add_effect_to_clip(
+		&mut self,
+		clip: ClipId,
+		type_id: &str,
+		cx: &mut Context<Self>,
+	) -> Result<(), String> {
+		// The mock appends a card to its demo effect stack (the stack is
+		// global in the mock; the clip id is recorded for the tests).
+		self.effect_clip_drops.push((clip.0, type_id.to_string()));
+		let id = self.next_effect_id;
+		self.next_effect_id += 1;
+		self.effects.push(MockEffect {
+			id: EffectId(id),
+			kind: EffectCardKind::Effect,
+			title: type_id.into(),
+			subtitle: None,
+			enabled: true,
+			expanded: false,
+			badge: None,
+		});
+		cx.notify();
+		Ok(())
+	}
+
 	fn drop_transition_at(
 		&mut self,
 		_type_id: &str,
-		_track_index: usize,
-		_time: Frame,
+		track_index: usize,
+		time: Frame,
+		_snap_frames: i64,
 		_cx: &mut Context<Self>,
 	) -> Result<(), String> {
-		// The mock models no transition blocks; the route is accepted.
+		// The mock models no transition blocks; the route is accepted and
+		// recorded for the drop-mapping tests.
+		self.transition_drops.push((track_index, time));
 		Ok(())
 	}
 
@@ -4562,7 +4595,7 @@ mod tests {
 					.tracks
 					.iter()
 					.any(|t| t.kind == TrackKind::Video && !t.clips.is_empty()));
-				assert!(e.drop_transition_at("x", 0, Frame(0), cx).is_ok());
+				assert!(e.drop_transition_at("x", 0, Frame(0), 25, cx).is_ok());
 
 				// Footage drops: an unknown id is a no-op; audio footage
 				// auto-selects an audio track even when pointed at video.

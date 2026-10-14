@@ -8846,6 +8846,58 @@ mod tests {
 	/// unknown control id), and a dismissed manager sub-dialog with no
 	/// manager falls back to opening it.
 	#[gpui_kit::test]
+	/// Regression: typing into the effect library's search box must not
+	/// trigger the single-key global hotkeys (s = split, q = ripple-to-in).
+	/// The shell's bindings are gated on the input exclusion predicate; a
+	/// focused text field's `Input` key context must keep them out.
+	#[gpui_kit::test]
+	async fn typing_in_the_search_box_beats_the_global_hotkeys(cx: &mut TestAppContext) {
+		let _guard = crate::actions::shortcuts_test_lock()
+			.lock()
+			.unwrap_or_else(|e| e.into_inner());
+		let _guard = crate::i18n::lang_test_lock()
+			.lock()
+			.unwrap_or_else(|e| e.into_inner());
+		let (window, root) = mock_shell(cx);
+
+		// Activate the effect library's tab (it starts behind the project
+		// explorer), so its search field is rendered and focusable.
+		let effect_library_entity = cx.read(|app| root.read(app).panels.effect_library.entity_id());
+		cx.update_window(window.into(), |_, window, app| {
+			root.update(app, |root, cx| {
+				root.dock.update(cx, |dock, cx| {
+					dock.select_panel(DockPanelId::from(effect_library_entity), window, cx);
+				});
+			});
+		})
+		.expect("window open");
+		cx.run_until_parked();
+		cx.update_window(window.into(), |_, window, app| {
+			let _ = window.draw(app);
+		})
+		.expect("window open");
+
+		// Focus the effect library's search field and type "sq".
+		let search = cx.read(|app| root.read(app).panels.effect_library.read(app).test_search());
+		let focus = cx.read(|app| {
+			use gpui_kit::Focusable as _;
+			search.read(app).focus_handle(app).clone()
+		});
+		cx.update_window(window.into(), |_, window, app| {
+			window.focus(&focus, app);
+		})
+		.expect("window open");
+		cx.run_until_parked();
+		let visual = VisualTestContext::from_window(window.into(), cx).into_mut();
+		visual.simulate_keystrokes("s q");
+		cx.run_until_parked();
+
+		// Both letters landed in the field (neither fired its action: the
+		// demo engine would log a split; the text is the assertion).
+		let text = visual.read(|app| search.read(app).value().to_string());
+		assert_eq!(text, "sq", "the letters type into the search box");
+	}
+
 	/// 编辑 → 重命名 on the timeline opens the shell's rename modal; OK
 	/// applies the name through the engine (one real edit, not a
 	/// placeholder).

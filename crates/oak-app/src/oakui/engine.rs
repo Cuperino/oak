@@ -410,6 +410,18 @@ pub trait AppEngine:
 		Err("add effect not supported".into())
 	}
 
+	/// Append the effect `type_id` to `clip`'s chain end (the timeline's
+	/// drop-effect-on-a-clip gesture). Default: unsupported.
+	fn add_effect_to_clip(
+		&mut self,
+		clip: ClipId,
+		type_id: &str,
+		cx: &mut Context<Self>,
+	) -> Result<(), String> {
+		let _ = (clip, type_id, cx);
+		Err("add effect not supported".into())
+	}
+
 	/// The parameter controls of `effect` for the inspector, or `None`
 	/// when the effect exposes no parameter UI (not a plugin node, or no
 	/// editable parameters). Default: `None` (the inspector renders its
@@ -1167,18 +1179,22 @@ pub trait AppEngine:
 	}
 
 	/// Drops a TRANSITION effect onto the timeline near `(track_index,
-	/// time)`: snaps to the nearest clip edge on that track and creates a
-	/// transition there — a junction transition when the edge is a
-	/// contiguous cut, otherwise a single-sided head/tail transition
-	/// (PR-style edge drops). Default: unsupported.
+	/// time)`: snaps to the nearest clip edge on that track within
+	/// `snap_frames` and creates a transition there — a junction
+	/// transition when the edge is a contiguous cut, otherwise a
+	/// single-sided head/tail transition (PR-style edge drops).
+	/// `snap_frames` scales with the timeline zoom (a fixed pixel aim
+	/// window) so zooming out never makes edges unhittable. Default:
+	/// unsupported.
 	fn drop_transition_at(
 		&mut self,
 		type_id: &str,
 		track_index: usize,
 		time: Frame,
+		snap_frames: i64,
 		cx: &mut Context<Self>,
 	) -> Result<(), String> {
-		let _ = (type_id, track_index, time, cx);
+		let _ = (type_id, track_index, time, snap_frames, cx);
 		Err("no project open".to_string())
 	}
 
@@ -2118,7 +2134,7 @@ mod tests {
 				assert!(engine.create_folder("f".into(), cx).is_err());
 				assert!(engine.create_text_footage(cx).is_err());
 				assert!(engine.drop_generator_clip("t", 0, Frame::ZERO, cx).is_err());
-				assert!(engine.drop_transition_at("t", 0, Frame::ZERO, cx).is_err());
+				assert!(engine.drop_transition_at("t", 0, Frame::ZERO, 25, cx).is_err());
 				assert!(engine
 					.update_sequence_parameters(
 						1,

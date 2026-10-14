@@ -4493,6 +4493,28 @@ impl AppEngine for RealEngine {
 		result
 	}
 
+	/// Append the effect to `clip`'s chain end (the timeline's
+	/// drop-effect-on-a-clip gesture), one undoable entry.
+	fn add_effect_to_clip(
+		&mut self,
+		clip: ClipId,
+		type_id: &str,
+		cx: &mut Context<Self>,
+	) -> Result<(), String> {
+		let Some(project) = self.project.clone() else {
+			return Err("no project open".into());
+		};
+		let Some(host) = graphops::id_of(clip.0) else {
+			return Err("clip not found".into());
+		};
+		if self.clip_track_locked(host) {
+			return Err("the clip's track is locked".into());
+		}
+		let result = super::effectchain::insert(&project, host, usize::MAX, type_id).map(|_| ());
+		self.apply_edit(result.clone(), "add effect", cx);
+		result
+	}
+
 	fn effect_params(&self, effect: EffectId) -> Option<Vec<crate::oakui::engine::EffectParam>> {
 		let project = self.project_ref()?;
 		let node = graphops::id_of(effect.0)?;
@@ -6400,6 +6422,7 @@ impl AppEngine for RealEngine {
 		_type_id: &str,
 		track_index: usize,
 		time: Frame,
+		snap_frames: i64,
 		cx: &mut Context<Self>,
 	) -> Result<(), String> {
 		let Some(project) = self.project.clone() else {
@@ -6464,8 +6487,12 @@ impl AppEngine for RealEngine {
 			let Some((dist, clip, start_edge)) = best else {
 				return Err("the target track has no clips".to_string());
 			};
-			if dist > oak_core::Rational::new(1, 1) {
-				return Err("no clip edge within one second of the drop point".to_string());
+			let snap = graphops::ts_to_rational(snap_frames.max(1), tb);
+			if dist > snap {
+				return Err(format!(
+					"no clip edge within {} frames of the drop point",
+					snap_frames
+				));
 			}
 			let Some((in_r, out_r, _)) = graphops::clip_range(&guard.graph, clip) else {
 				return Err("the edge clip has no range".to_string());
@@ -11695,7 +11722,7 @@ mod tests {
 		cx.update(|app| {
 			engine.update(app, |engine, cx| {
 				engine
-					.drop_transition_at("org.olivevideoeditor.Olive.transitionfx", 0, Frame(0), cx)
+					.drop_transition_at("org.olivevideoeditor.Olive.transitionfx", 0, Frame(0), 25, cx)
 					.expect("drop transition at the clip head")
 			})
 		});
@@ -13062,7 +13089,7 @@ mod tests {
 		assert!(r.is_err());
 		let r = cx.update(|app| {
 			engine.update(app, |engine, cx| {
-				engine.drop_transition_at("x", 0, Frame(0), cx)
+				engine.drop_transition_at("x", 0, Frame(0), 25, cx)
 			})
 		});
 		assert!(r.is_err());
@@ -17198,6 +17225,7 @@ mod tests {
 						"org.olivevideoeditor.Olive.transitionfx",
 						track,
 						Frame(frame),
+						25,
 						cx,
 					)
 				})
@@ -17225,6 +17253,21 @@ mod tests {
 		// A point far from any clip edge (more than a second).
 		let r = drop(cx, 1, 100);
 		assert!(r.is_err(), "no clip edge within one second");
+
+		// The window scales with the zoom (the panel derives it from the
+		// pixel snap threshold): the same far point lands with a wide one.
+		let r = cx.update(|app| {
+			engine.update(app, |engine, cx| {
+				engine.drop_transition_at(
+					"org.olivevideoeditor.Olive.transitionfx",
+					1,
+					Frame(100),
+					200,
+					cx,
+				)
+			})
+		});
+		assert!(r.is_ok(), "a wide (zoomed-out) snap window reaches the edge: {r:?}");
 
 		// An isolated clip's head edge with a previous clip that is not
 		// contiguous: a single-sided head transition (the previously

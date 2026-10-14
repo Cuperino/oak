@@ -61,6 +61,13 @@ pub struct EffectLibraryPanel<E: AppEngine> {
 }
 
 impl<E: AppEngine> EffectLibraryPanel<E> {
+	/// Test access to the search box state (the shell-level shortcut
+	/// conflict regression types into it).
+	#[cfg(test)]
+	pub(crate) fn test_search(&self) -> Entity<InputState> {
+		self.search.clone()
+	}
+
 	/// Builds the panel over `engine`'s addable-effect table.
 	pub fn new(engine: Entity<E>, window: &mut Window, cx: &mut Context<Self>) -> Self {
 		// Re-read the effect table whenever the engine notifies (the table

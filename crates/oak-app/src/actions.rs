@@ -333,16 +333,16 @@ pub fn entry_for_menu_id(id: usize) -> Option<&'static ActionEntry> {
 	REGISTRY.iter().find(|entry| entry.action.menu_id() == id)
 }
 
-/// The key-context every app hotkey stays out of: the editable-text
-/// element's `"EditableText"` context (shared by the app's single-line
-/// and multiline fields). NLEs run on single-key shuttles (j/k/l, i/o,
-/// c/v, …), and a context-less binding is treated as matching the
-/// DEEPEST context, so an ungated global would swallow every letter a
-/// user types into a value box / hex field / text input (the "cannot
-/// type into the text field" report).
+/// The key-context every app hotkey stays out of: the `"Input"` context
+/// that gpui-kit's text fields (single-line and multi-line) set while
+/// focused. NLEs run on single-key shuttles (j/k/l, i/o, c/v, …), and a
+/// context-less binding is treated as matching the DEEPEST context, so an
+/// ungated global would swallow every letter a user types into a value
+/// box / hex field / text input (the "cannot type into the text field"
+/// report). (The fork's `EditableText` context is gone with the fork.)
 pub(crate) fn input_exclusion_predicate() -> Rc<KeyBindingContextPredicate> {
 	Rc::new(
-		KeyBindingContextPredicate::parse("!EditableText")
+		KeyBindingContextPredicate::parse("!Input")
 			.expect("the input-exclusion predicate parses"),
 	)
 }
@@ -956,7 +956,7 @@ mod tests {
 	#[test]
 	fn input_exclusion_predicate_stays_out_of_text_fields() {
 		let predicate = input_exclusion_predicate();
-		let text_context = gpui_kit::KeyContext::parse("EditableText").unwrap();
+		let text_context = gpui_kit::KeyContext::parse("Input").unwrap();
 		let panel_context = gpui_kit::KeyContext::parse("Timeline").unwrap();
 		assert_eq!(
 			predicate.depth_of(&[text_context]),

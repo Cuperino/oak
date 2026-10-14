@@ -497,10 +497,27 @@ impl<E: AppEngine> TimelinePanel<E> {
 			type_id,
 			"org.olivevideoeditor.Olive.transition" | "org.olivevideoeditor.Olive.transitionfx"
 		) {
+			// The snap window follows the zoom: at least one second, and at
+			// least the widget's snap threshold in pixels — at low zoom a
+			// fixed time window is a handful of pixels and the edge becomes
+			// unhittable.
+			let snap_frames = {
+				let fps = self.engine.read(cx).frame_rate();
+				let one_second =
+					(fps.num as f64 / fps.den.max(1) as f64).round().max(1.0) as i64;
+				let zoom = self.timeline.read(cx).state.zoom;
+				let pixel_window =
+					(crate::widgets::timeline::SNAP_THRESHOLD_PX / zoom.max(0.001)).ceil() as i64;
+				one_second.max(pixel_window)
+			};
 			engine.update(cx, |engine, cx| {
-				if let Err(err) =
-					engine.drop_transition_at(type_id, target.track_index, target.time, cx)
-				{
+				if let Err(err) = engine.drop_transition_at(
+					type_id,
+					target.track_index,
+					target.time,
+					snap_frames,
+					cx,
+				) {
 					println!("[timeline] transition drop: {err}");
 				}
 			});
@@ -516,7 +533,43 @@ impl<E: AppEngine> TimelinePanel<E> {
 			})
 			.unwrap_or(false);
 		if !is_generator {
-			println!("[timeline] effect drop: \"{type_id}\" is not a generator");
+			// A non-generator effect dropped onto a clip appends to that
+			// clip's effect chain (bottom of its stack); empty space is
+			// ignored.
+			let clip = {
+				let engine = self.engine.read(cx);
+				engine.track(target.track_index).and_then(|track| {
+					track
+						.clips()
+						.iter()
+						.find(|clip| {
+							target.time >= clip.range().start && target.time < clip.range().end
+						})
+						.map(|clip| clip.id())
+				})
+			};
+			let Some(clip) = clip else {
+				return;
+			};
+			engine.update(cx, |engine, cx| {
+				if let Err(err) = engine.add_effect_to_clip(clip, type_id, cx) {
+					println!("[timeline] effect drop on clip failed: {err}");
+				} else {
+					// Select the clip so the inspector shows the new effect
+					// (the panel picks the selection up on the next widget
+					// sync).
+					engine.set_selected_clips(vec![clip], cx);
+				}
+			});
+			// The timeline widget tracks its own selection; mirror the
+			// engine's.
+			self.timeline.update(cx, |view, cx| {
+				view.state.clear_selection();
+				view.state.select(clip);
+				cx.emit(TimelineEvent::SelectionChanged);
+				cx.notify();
+			});
+			cx.notify();
 			return;
 		}
 		engine.update(cx, |engine, cx| {
@@ -2936,7 +2989,8 @@ mod tests {
 		});
 		cx.read(|app| assert!(panel.read(app).effect_drop.is_none()));
 
-		// A non-generator effect is ignored.
+		// A non-generator effect on a clip appends to that clip's chain
+		// (no new timeline clip); the same drop on empty space is ignored.
 		let clips_before = cx.read(|app| {
 			panel.read(app).engine.read(app).track(1).unwrap().clips().len()
 		});
@@ -2950,6 +3004,29 @@ mod tests {
 			cx.read(|app| panel.read(app).engine.read(app).track(1).unwrap().clips().len()),
 			clips_before,
 			"a non-generator makes no clip"
+		);
+		assert_eq!(
+			cx.read(|app| panel.read(app).engine.read(app).effect_clip_drops.len()),
+			1,
+			"the effect landed on the clip under the drop point"
+		);
+
+		// Empty space ignores the same effect.
+		cx.update(|_window, app| {
+			panel.update(app, |panel, cx| {
+				panel.effect_drop = Some(FootageDropTarget {
+					track_kind: TrackKind::Video,
+					track_index: 1,
+					time: Frame(10_000),
+					length: 250,
+				});
+				panel.finish_effect_drop(&non_generator, cx);
+			});
+		});
+		assert_eq!(
+			cx.read(|app| panel.read(app).engine.read(app).effect_clip_drops.len()),
+			1,
+			"empty space ignores the effect"
 		);
 
 		// A generator type creates a standalone clip on the pointed track.

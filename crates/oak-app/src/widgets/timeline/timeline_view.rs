@@ -449,8 +449,9 @@ pub const RULER_HEIGHT: f32 = 32.0;
 /// Public so host panels can reproduce the track row layout for drops.
 pub const MIN_TRACK_HEIGHT: f32 = 24.0;
 
-/// Snap engagement threshold, in pixels.
-const SNAP_THRESHOLD_PX: f32 = 8.0;
+/// Snap engagement threshold, in pixels. Public: the transition drop's
+/// snap window derives from it (8px at the current zoom, in frames).
+pub const SNAP_THRESHOLD_PX: f32 = 8.0;
 
 impl<D: TimelineDataSource> TimelineView<D> {
 	/// Creates a timeline view over `source`.
