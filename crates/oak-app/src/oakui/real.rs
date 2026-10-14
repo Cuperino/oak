@@ -5204,6 +5204,268 @@ impl AppEngine for RealEngine {
 		self.apply_edit(result, "paste", cx);
 	}
 
+	/// Paste the clipboard at the program playhead with ripple (C++ Paste
+	/// Insert): the tail shifts right by the pasted span, one undoable
+	/// entry.
+	fn clipboard_paste_insert(&mut self, cx: &mut Context<Self>) {
+		let (Some(project), Some(seq)) = (self.project.clone(), self.sequence) else {
+			return;
+		};
+		if self.clipboard.is_empty() {
+			return;
+		}
+		let playhead = self.clock_frame(Monitor::Program, cx).0.max(0);
+		let items = self.clipboard.clone();
+		let result = graphops::paste_clips_insert(&project, seq, &items, playhead).map(|_| ());
+		self.apply_edit(result, "paste insert", cx);
+	}
+
+	/// Duplicate the clips right after the selection's end (C++
+	/// Duplicate): copy + paste anchored at the latest out point.
+	fn duplicate_clips(&mut self, clips: Vec<ClipId>, cx: &mut Context<Self>) {
+		let (Some(project), Some(seq)) = (self.project.clone(), self.sequence) else {
+			return;
+		};
+		let blocks: Vec<NodeId> = clips
+			.iter()
+			.filter_map(|id| graphops::id_of(id.0))
+			.filter(|&b| !self.clip_track_locked(b))
+			.collect();
+		let result = graphops::duplicate_clips(&project, seq, &blocks).map(|_| ());
+		self.apply_edit(result, "duplicate", cx);
+	}
+
+	/// Rename the clips (C++ Rename): the node label, one undoable entry.
+	fn rename_clips(&mut self, clips: Vec<ClipId>, name: String, cx: &mut Context<Self>) {
+		let Some(project) = self.project.clone() else {
+			return;
+		};
+		let blocks: Vec<NodeId> = clips
+			.iter()
+			.filter_map(|id| graphops::id_of(id.0))
+			.collect();
+		let result = graphops::rename_blocks(&project, &blocks, &name);
+		self.apply_edit(result, "rename", cx);
+	}
+
+	/// Toggle the enabled flag of the clips (C++ Enable/Disable): the new
+	/// state is the inverse of the first clip's, applied to the whole
+	/// selection in one undoable entry.
+	fn toggle_clips_enabled(&mut self, clips: Vec<ClipId>, cx: &mut Context<Self>) {
+		let Some(project) = self.project.clone() else {
+			return;
+		};
+		let blocks: Vec<NodeId> = clips
+			.iter()
+			.filter_map(|id| graphops::id_of(id.0))
+			.filter(|&b| !self.clip_track_locked(b))
+			.collect();
+		if blocks.is_empty() {
+			return;
+		}
+		let enabled = {
+			let guard = graphops::lock(&project);
+			graphops::block_core_of(&guard.graph, blocks[0])
+				.map(|core| !core.enabled)
+				.unwrap_or(true)
+		};
+		let result = graphops::set_blocks_enabled(&project, &blocks, enabled);
+		self.apply_edit(result, "enable/disable clips", cx);
+	}
+
+	/// Nudge the clips (and their linked groups) by `delta` frames (C++
+	/// Nudge Left/Right): one undoable entry per linked group move.
+	fn nudge_clips(&mut self, clips: Vec<ClipId>, delta: i64, cx: &mut Context<Self>) {
+		let Some(project) = self.project.clone() else {
+			return;
+		};
+		// Expand to the transitive link group and keep one representative
+		// per group (the links move together inside move_clip_with_links).
+		let mut seen = std::collections::BTreeSet::new();
+		let mut first_err = Ok(());
+		for id in clips {
+			let Some(block) = graphops::id_of(id.0) else {
+				continue;
+			};
+			if !seen.insert(block) {
+				continue;
+			}
+			if self.clip_track_locked(block) {
+				continue;
+			}
+			let (links, in_ts) = {
+				let guard = graphops::lock(&project);
+				let links = guard
+					.graph
+					.links_of(block)
+					.into_iter()
+					.filter(|l| seen.insert(*l))
+					.collect::<Vec<_>>();
+				let in_ts = graphops::block_core_of(&guard.graph, block)
+					.map(|core| {
+						let tb = self.time_base().unwrap_or((1, 25));
+						graphops::rational_to_ts(core.range.in_(), tb)
+					})
+					.unwrap_or(0);
+				(links, in_ts)
+			};
+			let new_in = in_ts + delta;
+			if new_in < 0 {
+				continue;
+			}
+			let result = graphops::move_clip_with_links(&project, block, None, new_in, &links);
+			if result.is_err() {
+				first_err = result;
+				break;
+			}
+		}
+		self.apply_edit(first_err, "nudge", cx);
+	}
+
+	/// Trim the clips' in/out edge to the playhead (C++ Move In/Out to
+	/// Playhead; with `ripple` the track follows — Ripple to In/Out).
+	fn trim_selection_to_playhead(
+		&mut self,
+		clips: Vec<ClipId>,
+		in_edge: bool,
+		ripple: bool,
+		cx: &mut Context<Self>,
+	) {
+		let Some(project) = self.project.clone() else {
+			return;
+		};
+		let playhead = self.clock_frame(Monitor::Program, cx).0.max(0);
+		let mut first_err = Ok(());
+		for id in clips {
+			let Some(block) = graphops::id_of(id.0) else {
+				continue;
+			};
+			if self.clip_track_locked(block) {
+				continue;
+			}
+			// Skip when the playhead is outside the clip (or on the wrong
+			// side of the trimmed edge).
+			let (in_ts, out_ts) = {
+				let guard = graphops::lock(&project);
+				let Some(tb) = self.time_base() else {
+					return;
+				};
+				match graphops::block_core_of(&guard.graph, block) {
+					Some(core) => (
+						graphops::rational_to_ts(core.range.in_(), tb),
+						graphops::rational_to_ts(core.range.out(), tb),
+					),
+					None => continue,
+				}
+			};
+			let valid = if in_edge {
+				playhead > in_ts && playhead < out_ts
+			} else {
+				playhead > in_ts && playhead < out_ts
+			};
+			if !valid {
+				continue;
+			}
+			let result = if ripple {
+				graphops::ripple_trim_clip(&project, block, in_edge, playhead)
+			} else if in_edge {
+				graphops::trim_clip(&project, block, playhead, out_ts)
+			} else {
+				graphops::trim_clip(&project, block, in_ts, playhead)
+			};
+			if result.is_err() {
+				first_err = result;
+				break;
+			}
+		}
+		self.apply_edit(first_err, "trim to playhead", cx);
+	}
+
+	/// Roll the boundary at the clips' in/out edge to the playhead (C++
+	/// Edit to In/Out).
+	fn roll_selection_to_playhead(
+		&mut self,
+		clips: Vec<ClipId>,
+		at_in: bool,
+		cx: &mut Context<Self>,
+	) {
+		let Some(project) = self.project.clone() else {
+			return;
+		};
+		let playhead = self.clock_frame(Monitor::Program, cx).0.max(0);
+		let mut first_err = Ok(());
+		for id in clips {
+			let Some(block) = graphops::id_of(id.0) else {
+				continue;
+			};
+			if self.clip_track_locked(block) {
+				continue;
+			}
+			let result = graphops::roll_clip_edge_to(&project, block, at_in, playhead);
+			if result.is_err() {
+				first_err = result;
+				break;
+			}
+		}
+		self.apply_edit(first_err, "roll edit", cx);
+	}
+
+	/// Delete the workarea's in/out range on every unlocked track (C++
+	/// Delete/Ripple Delete In to Out).
+	fn delete_in_to_out(&mut self, ripple: bool, cx: &mut Context<Self>) {
+		let (Some(project), Some(seq)) = (self.project.clone(), self.sequence) else {
+			return;
+		};
+		let Some((in_point, out_point)) = self.workarea() else {
+			return;
+		};
+		let result = graphops::delete_area(
+			&project,
+			seq,
+			in_point.0.max(0),
+			out_point.0.max(0),
+			ripple,
+		);
+		self.apply_edit(
+			result,
+			if ripple {
+				"ripple delete in/out"
+			} else {
+				"delete in/out"
+			},
+			cx,
+		);
+	}
+
+	/// Set the clips' speed, span unchanged (C++ Speed/Duration).
+	fn set_clips_speed(&mut self, clips: Vec<ClipId>, speed: f64, cx: &mut Context<Self>) {
+		let Some(project) = self.project.clone() else {
+			return;
+		};
+		let blocks: Vec<NodeId> = clips
+			.iter()
+			.filter_map(|id| graphops::id_of(id.0))
+			.filter(|&b| !self.clip_track_locked(b))
+			.collect();
+		let result = graphops::set_clips_speed(&project, &blocks, speed);
+		self.apply_edit(result, "speed/duration", cx);
+	}
+
+	/// Nest the clips into a new sequence and replace them with one
+	/// nested clip spanning their range (C++ Nest).
+	fn nest_clips(&mut self, clips: Vec<ClipId>, cx: &mut Context<Self>) {
+		let (Some(project), Some(seq)) = (self.project.clone(), self.sequence) else {
+			return;
+		};
+		let blocks: Vec<NodeId> = clips
+			.iter()
+			.filter_map(|id| graphops::id_of(id.0))
+			.filter(|&b| !self.clip_track_locked(b))
+			.collect();
+		let result = graphops::nest_clips(&project, seq, &blocks).map(|_| ());
+		self.apply_edit(result, "nest", cx);
+	}
+
 	fn can_undo(&self) -> bool {
 		self.project.is_some() && oak_undo::global::undoable()
 	}

@@ -147,6 +147,10 @@ pub trait PanelCommandHandler: Sized {
 	fn toggle_selected_enabled(&mut self, _cx: &mut Context<Self>) -> bool {
 		false
 	}
+	/// 编辑 → 嵌套: group the selection into a nested sequence.
+	fn nest(&mut self, _cx: &mut Context<Self>) -> bool {
+		false
+	}
 	fn insert(&mut self, _cx: &mut Context<Self>) -> bool {
 		false
 	}
@@ -268,6 +272,7 @@ pub fn dispatch_to<P: PanelCommandHandler>(
 		ActionId::DefaultTransition => panel.default_transition(cx),
 		ActionId::LinkUnlink => panel.toggle_links(cx),
 		ActionId::EnableDisable => panel.toggle_selected_enabled(cx),
+		ActionId::Nest => panel.nest(cx),
 		ActionId::Insert => panel.insert(cx),
 		ActionId::Overwrite => panel.overwrite(cx),
 		ActionId::RippleToIn => panel.ripple_to_in(cx),

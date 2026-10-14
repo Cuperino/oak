@@ -586,6 +586,36 @@ impl<E: AppEngine> TimelinePanel<E> {
 		}
 	}
 
+	/// 上一个/下一个编辑点: the playhead jumps to the nearest clip
+	/// boundary across all tracks (sequence start/end included).
+	fn goto_cut(&mut self, forward: bool, cx: &mut Context<Self>) {
+		let playhead = self.engine.read(cx).clock_frame(Monitor::Program, cx);
+		let mut edges = std::collections::BTreeSet::new();
+		edges.insert(0);
+		edges.insert(self.engine.read(cx).sequence_length().0);
+		{
+			let engine = self.engine.read(cx);
+			for t in 0..engine.track_count() {
+				if let Some(track) = engine.track(t) {
+					for clip in track.clips() {
+						edges.insert(clip.range().start.0);
+						edges.insert(clip.range().end.0);
+					}
+				}
+			}
+		}
+		let target = if forward {
+			edges.range((playhead.0 + 1)..).next().copied()
+		} else {
+			edges.range(..playhead.0).next_back().copied()
+		};
+		if let Some(frame) = target {
+			self.engine.update(cx, |engine, cx| {
+				engine.request_frame(Monitor::Program, Frame(frame), cx)
+			});
+		}
+	}
+
 	/// Moves the work area's start (`in_point`) or end to the program
 	/// playhead as ONE undoable entry — the same commit the shell's
 	/// playback-menu in/out points use.
@@ -855,6 +885,182 @@ impl<E: AppEngine> PanelCommandHandler for TimelinePanel<E> {
 	}
 	fn decrease_track_height(&mut self, cx: &mut Context<Self>) -> bool {
 		self.nudge_track_height(-8.0, cx);
+		true
+	}
+
+	// --- edit-menu operations (previously stubs) -------------------------
+
+	/// 编辑 → 重复 / Ctrl+D: copy the selection and paste it right after
+	/// its end.
+	fn duplicate(&mut self, cx: &mut Context<Self>) -> bool {
+		let ids: Vec<ClipId> = self.timeline.read(cx).selection().iter().copied().collect();
+		if ids.is_empty() {
+			return false;
+		}
+		self.engine
+			.update(cx, |engine, cx| engine.duplicate_clips(ids, cx));
+		true
+	}
+	/// 编辑 → 重命名 / F2: the shell opens the rename prompt for the
+	/// selection (the panel owns no modal layer).
+	fn rename_selected(&mut self, cx: &mut Context<Self>) -> bool {
+		let ids: Vec<ClipId> = self.timeline.read(cx).selection().iter().copied().collect();
+		if ids.is_empty() {
+			return false;
+		}
+		cx.emit(TimelineDialogRequest::Rename { clips: ids });
+		true
+	}
+	/// 编辑 → 速度/持续时间 / Ctrl+R: the shell opens the speed prompt.
+	fn speed_duration(&mut self, cx: &mut Context<Self>) -> bool {
+		let ids: Vec<ClipId> = self.timeline.read(cx).selection().iter().copied().collect();
+		if ids.is_empty() {
+			return false;
+		}
+		cx.emit(TimelineDialogRequest::Speed { clips: ids });
+		true
+	}
+	/// 编辑 → 启用/禁用 / Shift+E.
+	fn toggle_selected_enabled(&mut self, cx: &mut Context<Self>) -> bool {
+		let ids: Vec<ClipId> = self.timeline.read(cx).selection().iter().copied().collect();
+		if ids.is_empty() {
+			return false;
+		}
+		self.engine
+			.update(cx, |engine, cx| engine.toggle_clips_enabled(ids, cx));
+		true
+	}
+	/// 编辑 → 嵌套: group the selection into a nested sequence.
+	fn nest(&mut self, cx: &mut Context<Self>) -> bool {
+		let ids: Vec<ClipId> = self.timeline.read(cx).selection().iter().copied().collect();
+		if ids.is_empty() {
+			return false;
+		}
+		self.engine
+			.update(cx, |engine, cx| engine.nest_clips(ids, cx));
+		true
+	}
+	/// 插入粘贴 / Ctrl+Shift+V: paste with ripple at the playhead.
+	fn paste_insert(&mut self, cx: &mut Context<Self>) -> bool {
+		self.engine
+			.update(cx, |engine, cx| engine.clipboard_paste_insert(cx));
+		true
+	}
+	fn nudge_left(&mut self, cx: &mut Context<Self>) -> bool {
+		let ids: Vec<ClipId> = self.timeline.read(cx).selection().iter().copied().collect();
+		if ids.is_empty() {
+			return false;
+		}
+		self.engine
+			.update(cx, |engine, cx| engine.nudge_clips(ids, -1, cx));
+		true
+	}
+	fn nudge_right(&mut self, cx: &mut Context<Self>) -> bool {
+		let ids: Vec<ClipId> = self.timeline.read(cx).selection().iter().copied().collect();
+		if ids.is_empty() {
+			return false;
+		}
+		self.engine
+			.update(cx, |engine, cx| engine.nudge_clips(ids, 1, cx));
+		true
+	}
+	fn move_in_to_playhead(&mut self, cx: &mut Context<Self>) -> bool {
+		let ids: Vec<ClipId> = self.timeline.read(cx).selection().iter().copied().collect();
+		if ids.is_empty() {
+			return false;
+		}
+		self.engine.update(cx, |engine, cx| {
+			engine.trim_selection_to_playhead(ids, true, false, cx)
+		});
+		true
+	}
+	fn move_out_to_playhead(&mut self, cx: &mut Context<Self>) -> bool {
+		let ids: Vec<ClipId> = self.timeline.read(cx).selection().iter().copied().collect();
+		if ids.is_empty() {
+			return false;
+		}
+		self.engine.update(cx, |engine, cx| {
+			engine.trim_selection_to_playhead(ids, false, false, cx)
+		});
+		true
+	}
+	fn ripple_to_in(&mut self, cx: &mut Context<Self>) -> bool {
+		let ids: Vec<ClipId> = self.timeline.read(cx).selection().iter().copied().collect();
+		if ids.is_empty() {
+			return false;
+		}
+		self.engine.update(cx, |engine, cx| {
+			engine.trim_selection_to_playhead(ids, true, true, cx)
+		});
+		true
+	}
+	fn ripple_to_out(&mut self, cx: &mut Context<Self>) -> bool {
+		let ids: Vec<ClipId> = self.timeline.read(cx).selection().iter().copied().collect();
+		if ids.is_empty() {
+			return false;
+		}
+		self.engine.update(cx, |engine, cx| {
+			engine.trim_selection_to_playhead(ids, false, true, cx)
+		});
+		true
+	}
+	fn edit_to_in(&mut self, cx: &mut Context<Self>) -> bool {
+		let ids: Vec<ClipId> = self.timeline.read(cx).selection().iter().copied().collect();
+		if ids.is_empty() {
+			return false;
+		}
+		self.engine.update(cx, |engine, cx| {
+			engine.roll_selection_to_playhead(ids, true, cx)
+		});
+		true
+	}
+	fn edit_to_out(&mut self, cx: &mut Context<Self>) -> bool {
+		let ids: Vec<ClipId> = self.timeline.read(cx).selection().iter().copied().collect();
+		if ids.is_empty() {
+			return false;
+		}
+		self.engine.update(cx, |engine, cx| {
+			engine.roll_selection_to_playhead(ids, false, cx)
+		});
+		true
+	}
+	fn delete_in_to_out(&mut self, cx: &mut Context<Self>) -> bool {
+		self.engine
+			.update(cx, |engine, cx| engine.delete_in_to_out(false, cx));
+		true
+	}
+	fn ripple_delete_in_to_out(&mut self, cx: &mut Context<Self>) -> bool {
+		self.engine
+			.update(cx, |engine, cx| engine.delete_in_to_out(true, cx));
+		true
+	}
+	fn go_to_prev_cut(&mut self, cx: &mut Context<Self>) -> bool {
+		self.goto_cut(false, cx);
+		true
+	}
+	fn go_to_next_cut(&mut self, cx: &mut Context<Self>) -> bool {
+		self.goto_cut(true, cx);
+		true
+	}
+	fn toggle_show_all(&mut self, cx: &mut Context<Self>) -> bool {
+		let length = self.engine.read(cx).sequence_length();
+		self.timeline.update(cx, |view, cx| view.show_all(length, cx));
+		true
+	}
+	fn multicam_switch(&mut self, angle: i32, split: bool, cx: &mut Context<Self>) -> bool {
+		// Only multicam-enabled selections switch; anything else (including
+		// an empty selection) declines so the hotkey falls through to the
+		// multicam panel.
+		let ids: Vec<ClipId> = self.timeline.read(cx).selection().iter().copied().collect();
+		if ids.is_empty() {
+			return false;
+		}
+		let eligible = self.engine.read(cx).multicam_enabled_on_selection(&ids);
+		if !eligible {
+			return false;
+		}
+		self.engine
+			.update(cx, |engine, cx| engine.multicam_switch_to(angle, split, cx));
 		true
 	}
 }
@@ -1198,6 +1404,34 @@ impl<E: AppEngine> Render for TimelinePanel<E> {
 }
 
 impl<E: AppEngine> EventEmitter<PanelEvent> for TimelinePanel<E> {}
+
+/// Dialogs the timeline needs the shell to open (the panel owns no modal
+/// layer): the shell shows the prompt and applies the result through the
+/// engine.
+#[derive(Debug, Clone, PartialEq)]
+pub enum TimelineDialogRequest {
+	/// 编辑 → 重命名: rename the selected clips.
+	Rename {
+		/// The clips to rename.
+		clips: Vec<ClipId>,
+	},
+	/// 编辑 → 速度/持续时间: set the selected clips' speed.
+	Speed {
+		/// The clips to retime.
+		clips: Vec<ClipId>,
+	},
+}
+
+impl<E: AppEngine> EventEmitter<TimelineDialogRequest> for TimelinePanel<E> {}
+
+impl<E: AppEngine> TimelinePanel<E> {
+	/// Test access to the timeline widget (shell-level regression tests
+	/// drive the selection through it).
+	#[cfg(test)]
+	pub(crate) fn test_timeline(&self) -> Entity<TimelineView<E>> {
+		self.timeline.clone()
+	}
+}
 
 impl<E: AppEngine> EventEmitter<ContextMenuTriggered> for TimelinePanel<E> {}
 
@@ -1631,6 +1865,114 @@ mod tests {
 		let panel = window.root(cx).expect("timeline panel root");
 		let cx = VisualTestContext::from_window(window.into(), cx).into_mut();
 		(cx, panel)
+	}
+
+	/// The Edit-menu operations that used to be stubs now reach the engine:
+	/// nudge moves the selection, enable/disable flips the flag, duplicate
+	/// copies past the selection's end, trims land at the playhead, and
+	/// rename/speed request their shell dialogs.
+	#[gpui_kit::test]
+	async fn edit_menu_actions_are_real(cx: &mut TestAppContext) {
+		let (cx, panel) = panel_window(cx, 1600.0, 900.0);
+		// Demo clip 11 sits at [0, 240) on its track.
+		let (engine, clip_id) = cx.read(|app| {
+			let engine = panel.read(app).engine.clone();
+			let track = engine.read(app).track(1).expect("second track");
+			let clip = track.clips()[0].id();
+			(engine, clip)
+		});
+		let range_of = |app: &App| {
+			let mut found = None;
+			let engine = engine.read(app);
+			for t in 0..engine.track_count() {
+				if let Some(track) = engine.track(t) {
+					if let Some(c) = track.clips().iter().find(|c| c.id() == clip_id) {
+						found = Some((c.range().start.0, c.range().end.0));
+					}
+				}
+			}
+			found
+		};
+		let enabled_of = |app: &App| {
+			let mut found = None;
+			let engine = engine.read(app);
+			for t in 0..engine.track_count() {
+				if let Some(track) = engine.track(t) {
+					if let Some(c) = track.clips().iter().find(|c| c.id() == clip_id) {
+						found = Some(c.is_enabled());
+					}
+				}
+			}
+			found
+		};
+		let select = |cx: &mut TestAppContext| {
+			cx.update(|app| {
+				panel.update(app, |p, cx| {
+					p.timeline.update(cx, |t, cx| {
+						t.state.clear_selection();
+						t.state.select(clip_id);
+						cx.notify();
+					});
+				});
+			});
+		};
+		select(cx);
+
+		// Nudge right/left.
+		cx.update(|_window, app| panel.update(app, |p, cx| p.nudge_right(cx)));
+		assert_eq!(cx.read(|app| range_of(app)), Some((1, 241)));
+		cx.update(|_window, app| panel.update(app, |p, cx| p.nudge_left(cx)));
+		assert_eq!(cx.read(|app| range_of(app)), Some((0, 240)));
+
+		// Enable/disable toggles.
+		assert_eq!(cx.read(|app| enabled_of(app)), Some(true));
+		cx.update(|_window, app| panel.update(app, |p, cx| p.toggle_selected_enabled(cx)));
+		assert_eq!(cx.read(|app| enabled_of(app)), Some(false));
+		cx.update(|_window, app| panel.update(app, |p, cx| p.toggle_selected_enabled(cx)));
+		assert_eq!(cx.read(|app| enabled_of(app)), Some(true));
+
+		// Duplicate pastes right after the selection's end (240).
+		cx.update(|_window, app| panel.update(app, |p, cx| p.duplicate(cx)));
+		let dup_found = cx.read(|app| {
+			let engine = engine.read(app);
+			let track = engine.track(1).expect("second track");
+			track
+				.clips()
+				.iter()
+				.any(|c| c.range().start.0 == 240 && c.range().end.0 == 480 && c.id() != clip_id)
+		});
+		assert!(dup_found, "the duplicate lands at [240, 480)");
+
+		// Move in-to-playhead: playhead at 100 trims the clip's head.
+		cx.update(|_window, app| {
+			engine.update(app, |engine, cx| {
+				engine.request_frame(crate::oakui::engine::Monitor::Program, Frame(100), cx)
+			});
+		});
+		cx.update(|_window, app| panel.update(app, |p, cx| p.move_in_to_playhead(cx)));
+		assert_eq!(cx.read(|app| range_of(app)), Some((100, 240)));
+
+		// The rename/speed requests emit their dialog events.
+		let requests = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+		let requests_sub = requests.clone();
+		cx.update(|_window, app| {
+			panel.update(app, |_p, cx| {
+				cx.subscribe(
+					&cx.entity(),
+					move |_p, _e, event: &TimelineDialogRequest, _cx| {
+						requests_sub.lock().unwrap().push(event.clone());
+					},
+				)
+				.detach();
+			});
+		});
+		cx.update(|_window, app| panel.update(app, |p, cx| p.rename_selected(cx)));
+		cx.update(|_window, app| panel.update(app, |p, cx| p.speed_duration(cx)));
+		let got = requests.lock().unwrap().clone();
+		assert!(
+			matches!(got.as_slice(), [TimelineDialogRequest::Rename { .. }, TimelineDialogRequest::Speed { .. }]),
+			"rename and speed request their dialogs: {got:?}"
+		);
 	}
 
 	/// The toolbar's zoom slider tracks the pointer: press+drag right raises

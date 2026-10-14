@@ -636,6 +636,8 @@
 "dialog.cancel": "キャンセル"
 "dialog.close": "閉じる"
 "dialog.ok": "OK"
+"timeline.rename.title": "クリップ名を変更"
+"timeline.speed.title": "速度/デュレーション"
 "projprops.title": "プロジェクト設定"
 "projprops.name": "プロジェクト名"
 "projprops.ocio_config": "OpenColorIO設定"

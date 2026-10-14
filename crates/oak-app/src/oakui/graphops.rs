@@ -3314,6 +3314,222 @@ pub fn paste_clips(
 	items: &[ClipboardClip],
 	playhead_ts: i64,
 ) -> Result<Vec<NodeId>, String> {
+	let (commands, new_ids) = paste_clips_commands(p, seq, items, playhead_ts)?;
+	push_multi(commands, "Paste")?;
+	Ok(new_ids)
+}
+
+// ---------------------------------------------------------------------------
+// Edit-menu operations (启用/禁用、速度、重命名、重复、插入粘贴、区域删除、
+// 滚动编辑到播放头、嵌套)
+// ---------------------------------------------------------------------------
+
+/// Enable or disable blocks (undoable "Enable/Disable Clips"): blocks
+/// already in the target state are skipped; the batch is one undo entry.
+pub fn set_blocks_enabled(p: &ProjectRef, blocks: &[NodeId], enabled: bool) -> Result<(), String> {
+	let mut children = Vec::new();
+	for &b in blocks {
+		let old = {
+			let g = lock(p);
+			match block_core_of(&g.graph, b) {
+				Some(core) if core.enabled != enabled => core.enabled,
+				_ => continue,
+			}
+		};
+		let (r1, r2) = (node_ref(p, b), node_ref(p, b));
+		children.push(oak_undo::undocommand::UndoCommand::from_closures(
+			move || oak_timeline::util::block_set_enabled(&r1, enabled),
+			move || oak_timeline::util::block_set_enabled(&r2, old),
+		));
+	}
+	push_multi(
+		children,
+		if enabled {
+			"Enable Clips"
+		} else {
+			"Disable Clips"
+		},
+	)
+}
+
+/// Set the speed of clips, span unchanged (undoable "Speed/Duration"):
+/// the media mapping `media = (time - in) * speed` follows immediately.
+pub fn set_clips_speed(p: &ProjectRef, clips: &[NodeId], speed: f64) -> Result<(), String> {
+	if !(speed.is_finite() && speed.abs() > 1e-9) {
+		return Err("speed must be a non-zero finite number".to_string());
+	}
+	let mut children = Vec::new();
+	for &c in clips {
+		let old = {
+			let g = lock(p);
+			match block_core_of(&g.graph, c) {
+				Some(core) if (core.speed - speed).abs() > 1e-12 => core.speed,
+				_ => continue,
+			}
+		};
+		let (r1, r2) = (node_ref(p, c), node_ref(p, c));
+		children.push(oak_undo::undocommand::UndoCommand::from_closures(
+			move || {
+				let mut g = lock(&r1.project);
+				with_block_core_mut(&mut g.graph, r1.id, |core| core.speed = speed);
+			},
+			move || {
+				let mut g = lock(&r2.project);
+				with_block_core_mut(&mut g.graph, r2.id, |core| core.speed = old);
+			},
+		));
+	}
+	push_multi(children, "Speed/Duration")
+}
+
+/// Rename blocks (set the node label; undoable "Rename").
+pub fn rename_blocks(p: &ProjectRef, blocks: &[NodeId], name: &str) -> Result<(), String> {
+	if name.trim().is_empty() {
+		return Err("empty name".to_string());
+	}
+	let mut children = Vec::new();
+	for &b in blocks {
+		let Some(old) = ({
+			let g = lock(p);
+			g.graph.get(b).map(|e| e.core.label.clone())
+		}) else {
+			continue;
+		};
+		if old == name {
+			continue;
+		}
+		let (p1, p2) = (p.clone(), p.clone());
+		let (new_name, old_name) = (name.to_string(), old);
+		children.push(oak_undo::undocommand::UndoCommand::from_closures(
+			move || {
+				if let Some(e) = lock(&p1).graph.get_mut(b) {
+					e.core.label = new_name.clone();
+				}
+			},
+			move || {
+				if let Some(e) = lock(&p2).graph.get_mut(b) {
+					e.core.label = old_name.clone();
+				}
+			},
+		));
+	}
+	push_multi(children, "Rename")
+}
+
+/// Duplicate `clips` right after the selection's end (undoable
+/// "Duplicate"): clipboard copy + paste anchored at the latest out point
+/// (the C++ Edit > Duplicate semantics).
+pub fn duplicate_clips(
+	p: &ProjectRef,
+	seq: NodeId,
+	clips: &[NodeId],
+) -> Result<Vec<NodeId>, String> {
+	if clips.is_empty() {
+		return Err("nothing selected".to_string());
+	}
+	let items = copy_clips(p, clips);
+	if items.is_empty() {
+		return Err("nothing to duplicate".to_string());
+	}
+	let end = items
+		.iter()
+		.map(|c| c.start_ts + c.length_ts)
+		.max()
+		.unwrap_or(0);
+	paste_clips(p, seq, &items, end)
+}
+
+/// Shift commands moving every unlocked block starting at or after
+/// `from_ts` right by `delta_ts` (frame timestamps). The insert-paste
+/// and gap-preserving area delete build on it.
+fn shift_blocks_after(
+	p: &ProjectRef,
+	seq: NodeId,
+	from_ts: i64,
+	delta_ts: i64,
+) -> Result<Vec<oak_undo::undocommand::UndoCommand>, String> {
+	if delta_ts == 0 {
+		return Ok(Vec::new());
+	}
+	let (tb, targets) = {
+		let g = lock(p);
+		let tb = sequence_time_base(&g.graph, seq)
+			.ok_or_else(|| "sequence has no valid frame rate".to_string())?;
+		let from = ts_to_rational(from_ts, tb);
+		let mut targets = Vec::new();
+		for kind in [TrackType::Video, TrackType::Audio] {
+			let Some(list) = track_list_of(&g.graph, seq, kind) else {
+				continue;
+			};
+			let Some(l) = track_list_behavior(&g.graph, list) else {
+				continue;
+			};
+			for &track in &l.tracks {
+				if track_behavior(&g.graph, track).map(|t| t.locked).unwrap_or(false) {
+					continue;
+				}
+				let Some(t) = track_behavior(&g.graph, track) else {
+					continue;
+				};
+				for &b in &t.blocks {
+					let Some(core) = block_core_of(&g.graph, b) else {
+						continue;
+					};
+					if core.range.in_() >= from {
+						targets.push(b);
+					}
+				}
+			}
+		}
+		(tb, targets)
+	};
+	let delta = ts_to_rational(delta_ts, tb);
+	let mut children = Vec::new();
+	for b in targets {
+		let (r1, r2) = (node_ref(p, b), node_ref(p, b));
+		let old_in = block_in(&r1);
+		children.push(oak_undo::undocommand::UndoCommand::from_closures(
+			move || block_set_in(&r1, old_in + delta),
+			move || block_set_in(&r2, old_in),
+		));
+	}
+	Ok(children)
+}
+
+/// Paste with ripple (undoable "Paste Insert"): every unlocked block
+/// starting at or after the playhead shifts right by the pasted span,
+/// then the clipboard lands at the playhead — all in ONE undo entry.
+pub fn paste_clips_insert(
+	p: &ProjectRef,
+	seq: NodeId,
+	items: &[ClipboardClip],
+	playhead_ts: i64,
+) -> Result<Vec<NodeId>, String> {
+	if items.is_empty() {
+		return Err("the clipboard is empty".to_string());
+	}
+	let anchor = items[0].start_ts;
+	let span = items
+		.iter()
+		.map(|c| c.start_ts - anchor + c.length_ts)
+		.max()
+		.unwrap_or(0);
+	let mut children = shift_blocks_after(p, seq, playhead_ts, span)?;
+	// The paste machinery's command builder, minus its push.
+	let (mut paste_cmds, new_ids) = paste_clips_commands(p, seq, items, playhead_ts)?;
+	children.append(&mut paste_cmds);
+	push_multi(children, "Paste Insert")?;
+	Ok(new_ids)
+}
+
+/// The paste command set of [`paste_clips`] without the push, so callers
+/// (paste-insert) can prepend their own commands into the same undo entry.
+fn paste_clips_commands(
+	p: &ProjectRef,
+	seq: NodeId,
+	items: &[ClipboardClip],
+	playhead_ts: i64,
+) -> Result<(Vec<oak_undo::undocommand::UndoCommand>, Vec<NodeId>), String> {
 	if items.is_empty() {
 		return Err("the clipboard is empty".to_string());
 	}
@@ -3322,8 +3538,6 @@ pub fn paste_clips(
 	for item in items {
 		let start = playhead_ts + (item.start_ts - anchor);
 		let out = start + item.length_ts;
-		// Re-use the placement machinery one clip at a time, collecting
-		// the commands so everything lands in ONE undo entry.
 		clips.push((item, start, out));
 	}
 
@@ -3387,9 +3601,6 @@ pub fn paste_clips(
 			oak_node::block::clip_input::TEXTURE_INPUT,
 		)?);
 	}
-	// Link the pasted group both ways via the graph API, so the links land
-	// on NodeCore.links where links_of/are_linked read them (the C++ pastes
-	// linked selections as a linked group).
 	if new_ids.len() > 1 {
 		let first = new_ids[0];
 		for &other in &new_ids[1..] {
@@ -3404,8 +3615,186 @@ pub fn paste_clips(
 			));
 		}
 	}
-	push_multi(commands, "Paste")?;
-	Ok(new_ids)
+	Ok((commands, new_ids))
+}
+
+/// Delete the `[in_ts, out_ts)` area on every unlocked track of the
+/// sequence (undoable). Ripple closes the gap (the module's
+/// `TrackRippleRemoveAreaCommand` per track); non-ripple reopens a gap of
+/// the same size (ripple-remove + shift the tail back right by the span).
+pub fn delete_area(
+	p: &ProjectRef,
+	seq: NodeId,
+	in_ts: i64,
+	out_ts: i64,
+	ripple: bool,
+) -> Result<(), String> {
+	if out_ts <= in_ts {
+		return Err("invalid area (need in < out)".to_string());
+	}
+	let (tb, tracks) = {
+		let g = lock(p);
+		let tb = sequence_time_base(&g.graph, seq)
+			.ok_or_else(|| "sequence has no valid frame rate".to_string())?;
+		let mut tracks = Vec::new();
+		for kind in [TrackType::Video, TrackType::Audio] {
+			let Some(list) = track_list_of(&g.graph, seq, kind) else {
+				continue;
+			};
+			let Some(l) = track_list_behavior(&g.graph, list) else {
+				continue;
+			};
+			for &track in &l.tracks {
+				if track_behavior(&g.graph, track).map(|t| t.locked).unwrap_or(false) {
+					continue;
+				}
+				tracks.push(track);
+			}
+		}
+		(tb, tracks)
+	};
+	let in_r = ts_to_rational(in_ts, tb);
+	let out_r = ts_to_rational(out_ts, tb);
+	let mut children = Vec::new();
+	for track in &tracks {
+		children.push(
+			oak_timeline::undoripple::TrackRippleRemoveAreaCommand::new(
+				node_ref(p, *track),
+				TimeRange::new(in_r, out_r),
+			)
+			.to_command(),
+		);
+	}
+	if ripple {
+		// The removal command only clears the range; the ripple pulls the
+		// tail left by the span (undo restores, in reverse order the shifts
+		// unwind before the removals are undone).
+		let span = out_r - in_r;
+		let targets = {
+			let g = lock(p);
+			let mut targets = Vec::new();
+			for &track in &tracks {
+				let Some(t) = track_behavior(&g.graph, track) else {
+					continue;
+				};
+				for &b in &t.blocks {
+					let Some(core) = block_core_of(&g.graph, b) else {
+						continue;
+					};
+					if core.range.in_() >= out_r {
+						targets.push(b);
+					}
+				}
+			}
+			targets
+		};
+		for b in targets {
+			let (r1, r2) = (node_ref(p, b), node_ref(p, b));
+			let old_in = block_in(&r1);
+			children.push(oak_undo::undocommand::UndoCommand::from_closures(
+				move || block_set_in(&r1, old_in - span),
+				move || block_set_in(&r2, old_in),
+			));
+		}
+	}
+	push_multi(
+		children,
+		if ripple {
+			"Ripple Delete In/Out"
+		} else {
+			"Delete In/Out"
+		},
+	)
+}
+
+/// Roll the boundary at `clip`'s edge to the playhead (undoable
+/// "Roll Edit"): `at_in` rolls the boundary with the previous block,
+/// otherwise the one with the next block. No-op when the playhead is
+/// outside the two blocks' combined span or there is no neighbor.
+pub fn roll_clip_edge_to(
+	p: &ProjectRef,
+	clip: NodeId,
+	at_in: bool,
+	frame_ts: i64,
+) -> Result<(), String> {
+	let (track, blocks, index) = {
+		let g = lock(p);
+		let track = clip_track(&g.graph, clip)
+			.ok_or_else(|| "the clip is not on a track".to_string())?;
+		let blocks = track_behavior(&g.graph, track)
+			.map(|t| t.blocks.clone())
+			.unwrap_or_default();
+		let index = blocks
+			.iter()
+			.position(|&b| b == clip)
+			.ok_or_else(|| "the clip is not on its track".to_string())?;
+		(track, blocks, index)
+	};
+	let neighbor = if at_in {
+		index.checked_sub(1).map(|i| blocks[i])
+	} else {
+		blocks.get(index + 1).copied()
+	};
+	let Some(neighbor) = neighbor else {
+		return Ok(());
+	};
+	// Only clip blocks roll (a gap neighbor has no media to reveal).
+	let is_clip = |b: NodeId| {
+		let g = lock(p);
+		clip_behavior(&g.graph, b).is_some()
+	};
+	if !is_clip(neighbor) {
+		return Ok(());
+	}
+	let (a, b) = if at_in { (neighbor, clip) } else { (clip, neighbor) };
+	roll_edit(p, track, a, b, frame_ts)
+}
+
+/// Nest `clips` into a new sequence and replace them with one nested
+/// clip spanning their range ("嵌套"): the new sequence (named after the
+/// first clip) lands in the root folder and holds the clips at their
+/// relative offsets; the originals are deleted from the host sequence.
+///
+/// The steps are separate undo entries (the sequence factory and the
+/// placement machinery predate command composition).
+pub fn nest_clips(p: &ProjectRef, seq: NodeId, clips: &[NodeId]) -> Result<NodeId, String> {
+	if clips.is_empty() {
+		return Err("nothing selected".to_string());
+	}
+	let items = copy_clips(p, clips);
+	if items.is_empty() {
+		return Err("nothing to nest".to_string());
+	}
+	let start = items.iter().map(|c| c.start_ts).min().unwrap_or(0);
+	let end = items
+		.iter()
+		.map(|c| c.start_ts + c.length_ts)
+		.max()
+		.unwrap_or(0);
+	let track_index = items[0].track_index;
+	let label = {
+		let g = lock(p);
+		g.graph
+			.get(clips[0])
+			.map(|e| e.core.label.clone())
+			.filter(|s| !s.is_empty())
+			.unwrap_or_else(|| "Nested Sequence".to_string())
+	};
+	let nested_seq = create_sequence(p, &label);
+	// Repack the clips at their relative offsets starting at 0.
+	let mut rel = items.clone();
+	for item in &mut rel {
+		item.start_ts -= start;
+	}
+	paste_clips(p, nested_seq, &rel, 0)?;
+	let nested = place_nested_sequence_clip(p, seq, nested_seq, track_index, start, end)?;
+	// The nested clip's placement overwrites the covered originals
+	// (the placement machinery splits/removes what it covers); delete
+	// whatever survives, ignoring the already-gone.
+	for &clip in clips {
+		let _ = delete_clip(p, clip);
+	}
+	Ok(nested)
 }
 
 // ---------------------------------------------------------------------------
@@ -3671,6 +4060,134 @@ mod tests {
 				"redo relinks the pair"
 			);
 		}
+		oak_undo::global::clear().unwrap();
+		let _ = std::fs::remove_file(&media);
+	}
+
+
+	/// Edit-menu operations: enable/disable, speed, rename, duplicate,
+	/// paste-insert (tail shifts right), area delete (gap vs ripple) and
+	/// roll-to-playhead — each undoable.
+	#[test]
+	fn edit_menu_operations_roundtrip() {
+		let _g = test_lock();
+		oak_undo::global::clear().unwrap();
+		let project = create_project();
+		let seq = create_sequence(&project, "EditOps");
+		let media = std::env::temp_dir().join(format!(
+			"oak_edit_ops_{}.mp4",
+			std::process::id()
+		));
+		oak_codec::testmedia::write_test_clip(&media, 64, 64, 10, 10).expect("generate test media");
+		let footage = import_footage(&project, &media).expect("import");
+
+		let clip_a = place_footage_clip(&project, seq, footage, TrackType::Video, 0, 0, 10, 0)
+			.expect("clip A");
+		let clip_b = place_footage_clip(&project, seq, footage, TrackType::Video, 0, 10, 20, 0)
+			.expect("clip B");
+
+		let range_of = |p: &ProjectRef, c: NodeId| {
+			let g = lock(p);
+			let core = block_core_of(&g.graph, c).expect("block core");
+			let tb = sequence_time_base(&g.graph, seq).unwrap_or((1, 25));
+			(
+				rational_to_ts(core.range.in_(), tb),
+				rational_to_ts(core.range.out(), tb),
+			)
+		};
+
+		// Enable/disable toggles, and undoes.
+		set_blocks_enabled(&project, &[clip_a], false).expect("disable");
+		{
+			let g = lock(&project);
+			assert!(!block_core_of(&g.graph, clip_a).unwrap().enabled);
+		}
+		oak_undo::global::undo().expect("undo disable");
+		{
+			let g = lock(&project);
+			assert!(block_core_of(&g.graph, clip_a).unwrap().enabled);
+		}
+
+		// Speed lands on the block core; the span is unchanged.
+		set_clips_speed(&project, &[clip_a], 2.0).expect("speed");
+		{
+			let g = lock(&project);
+			let core = block_core_of(&g.graph, clip_a).unwrap();
+			assert_eq!(core.speed, 2.0);
+		}
+		assert_eq!(range_of(&project, clip_a), (0, 10), "span unchanged");
+		oak_undo::global::undo().expect("undo speed");
+		{
+			let g = lock(&project);
+			assert_eq!(block_core_of(&g.graph, clip_a).unwrap().speed, 1.0);
+		}
+
+		// Rename sets the label, undo restores it.
+		let old_label = {
+			let g = lock(&project);
+			g.graph.get(clip_a).unwrap().core.label.clone()
+		};
+		rename_blocks(&project, &[clip_a], "新名字").expect("rename");
+		{
+			let g = lock(&project);
+			assert_eq!(g.graph.get(clip_a).unwrap().core.label, "新名字");
+		}
+		oak_undo::global::undo().expect("undo rename");
+		{
+			let g = lock(&project);
+			assert_eq!(g.graph.get(clip_a).unwrap().core.label, old_label);
+		}
+
+		// Duplicate lands right after the selection's end.
+		let dup = duplicate_clips(&project, seq, &[clip_a, clip_b]).expect("duplicate");
+		assert_eq!(dup.len(), 2);
+		assert_eq!(range_of(&project, dup[0]), (20, 30));
+		assert_eq!(range_of(&project, dup[1]), (30, 40));
+		oak_undo::global::undo().expect("undo duplicate");
+
+		// Paste-insert at 5: A straddles the playhead so it splits (front
+		// stays [0,5), rear shifts right past the pasted span); B shifts.
+		let items = copy_clips(&project, &[clip_a]);
+		let inserted = paste_clips_insert(&project, seq, &items, 5).expect("paste insert");
+		assert_eq!(range_of(&project, inserted[0]), (5, 15));
+		assert_eq!(range_of(&project, clip_b), (20, 30), "B shifted right");
+		assert_eq!(range_of(&project, clip_a), (0, 5), "A's front half stays");
+		oak_undo::global::undo().expect("undo paste insert");
+		assert_eq!(range_of(&project, clip_b), (10, 20), "undo restores B");
+		assert_eq!(range_of(&project, clip_a), (0, 10), "undo restores A");
+
+		// Roll A's out boundary (A|B at 10) to 12: A extends, B shrinks.
+		roll_clip_edge_to(&project, clip_a, false, 12).expect("roll out");
+		assert_eq!(range_of(&project, clip_a), (0, 12));
+		assert_eq!(range_of(&project, clip_b), (12, 20));
+		oak_undo::global::undo().expect("undo roll");
+		assert_eq!(range_of(&project, clip_a), (0, 10));
+		assert_eq!(range_of(&project, clip_b), (10, 20));
+
+		// Non-ripple area delete of [2, 6): A shrinks to [0, 2), B stays.
+		delete_area(&project, seq, 2, 6, false).expect("delete area");
+		assert_eq!(range_of(&project, clip_a), (0, 2));
+		assert_eq!(range_of(&project, clip_b), (10, 20), "gap left behind");
+		oak_undo::global::undo().expect("undo delete area");
+		assert_eq!(range_of(&project, clip_a), (0, 10));
+
+		// Ripple area delete of [2, 6): A shrinks, B pulls left by 4.
+		delete_area(&project, seq, 2, 6, true).expect("ripple delete area");
+		assert_eq!(range_of(&project, clip_a), (0, 2));
+		assert_eq!(range_of(&project, clip_b), (6, 16), "tail rippled left");
+		oak_undo::global::undo().expect("undo ripple delete");
+		assert_eq!(range_of(&project, clip_b), (10, 20));
+
+		// Nest: the two clips collapse into one nested clip spanning them,
+		// and a new sequence appears in the project.
+		let nested = nest_clips(&project, seq, &[clip_a, clip_b]).expect("nest");
+		assert_eq!(range_of(&project, nested), (0, 20));
+		{
+			let g = lock(&project);
+			assert!(!g.graph.is_valid(clip_a), "the originals are gone");
+			assert!(!g.graph.is_valid(clip_b));
+		}
+
 		oak_undo::global::clear().unwrap();
 		let _ = std::fs::remove_file(&media);
 	}

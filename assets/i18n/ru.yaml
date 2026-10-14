@@ -636,6 +636,8 @@
 "dialog.cancel": "Отмена"
 "dialog.close": "Закрыть"
 "dialog.ok": "ОК"
+"timeline.rename.title": "Переименовать клип"
+"timeline.speed.title": "Скорость/длительность"
 "projprops.title": "Свойства проекта"
 "projprops.name": "Имя проекта"
 "projprops.ocio_config": "Конфигурация OpenColorIO"

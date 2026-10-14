@@ -643,6 +643,47 @@ pub trait AppEngine:
 	fn clipboard_cut(&mut self, _clips: Vec<ClipId>, _cx: &mut Context<Self>) {}
 	/// Paste the clipboard at the playhead (C++ Paste), one undoable entry.
 	fn clipboard_paste(&mut self, _cx: &mut Context<Self>) {}
+	/// Paste the clipboard at the playhead, rippling following content
+	/// right (C++ Paste Insert), one undoable entry.
+	fn clipboard_paste_insert(&mut self, _cx: &mut Context<Self>) {}
+	/// Duplicate the clips right after the selection's end (C++ Duplicate).
+	fn duplicate_clips(&mut self, _clips: Vec<ClipId>, _cx: &mut Context<Self>) {}
+	/// Rename the clips (C++ Rename, one undoable entry).
+	fn rename_clips(&mut self, _clips: Vec<ClipId>, _name: String, _cx: &mut Context<Self>) {}
+	/// Toggle the enabled flag of the clips (C++ Enable/Disable).
+	fn toggle_clips_enabled(&mut self, _clips: Vec<ClipId>, _cx: &mut Context<Self>) {}
+	/// Nudge the clips (and their linked groups) by `delta` frames
+	/// (C++ Nudge Left/Right).
+	fn nudge_clips(&mut self, _clips: Vec<ClipId>, _delta: i64, _cx: &mut Context<Self>) {}
+	/// Trim the clips' in/out edge to the playhead, rippling the track
+	/// when `ripple` is set (C++ Move In/Out to Playhead /
+	/// Ripple to In/Out).
+	fn trim_selection_to_playhead(
+		&mut self,
+		_clips: Vec<ClipId>,
+		_in_edge: bool,
+		_ripple: bool,
+		_cx: &mut Context<Self>,
+	) {
+	}
+	/// Roll the boundary at the clips' in/out edge to the playhead
+	/// (C++ Edit to In/Out).
+	fn roll_selection_to_playhead(
+		&mut self,
+		_clips: Vec<ClipId>,
+		_at_in: bool,
+		_cx: &mut Context<Self>,
+	) {
+	}
+	/// Delete the workarea's in/out range on every unlocked track,
+	/// rippling the gap closed when `ripple` is set (C++ Delete/Ripple
+	/// Delete In to Out).
+	fn delete_in_to_out(&mut self, _ripple: bool, _cx: &mut Context<Self>) {}
+	/// Set the clips' speed (span unchanged; C++ Speed/Duration).
+	fn set_clips_speed(&mut self, _clips: Vec<ClipId>, _speed: f64, _cx: &mut Context<Self>) {}
+	/// Nest the clips into a new sequence and replace them with one
+	/// nested clip (C++ Nest).
+	fn nest_clips(&mut self, _clips: Vec<ClipId>, _cx: &mut Context<Self>) {}
 
 	/// Whether the undo stack has an entry to undo.
 	fn can_undo(&self) -> bool;

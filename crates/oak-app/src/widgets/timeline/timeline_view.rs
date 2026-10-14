@@ -428,6 +428,9 @@ pub struct TimelineView<D: TimelineDataSource> {
 	/// canvas child (the right-click hit test converts window positions
 	/// through it).
 	clip_area_origin: Point<Pixels>,
+	/// The clip area's width, captured on the same layout (Show-All fits
+	/// the sequence into it).
+	clip_area_width: f32,
 	/// The in-progress clip-move drag, recorded by the drag constructor:
 	/// the move ghost's geometry follows it during render. gpui-kit keeps
 	/// `App::active_drag` private, so the timeline tracks its own.
@@ -467,6 +470,7 @@ impl<D: TimelineDataSource> TimelineView<D> {
 			decorator: std::sync::Arc::new(std::sync::RwLock::new(NoopClipDecorator)),
 			focus_handle,
 			clip_area_origin: Point::default(),
+			clip_area_width: 0.0,
 			active_clip_drag: None,
 		}
 	}
@@ -529,6 +533,20 @@ impl<D: TimelineDataSource> TimelineView<D> {
 	/// The current selection, in deterministic (id) order.
 	pub fn selection(&self) -> &BTreeSet<ClipId> {
 		&self.state.selection
+	}
+
+	/// Zoom to fit the whole sequence (View > Show All): the sequence's
+	/// full length lands in the clip area's current width, scrolled back
+	/// to the start.
+	pub fn show_all(&mut self, sequence_length: Frame, cx: &mut Context<Self>) {
+		if self.clip_area_width <= 0.0 || sequence_length.0 <= 0 {
+			return;
+		}
+		let fit = self.clip_area_width / sequence_length.0 as f32;
+		self.state.set_zoom(fit, px(0.0));
+		self.state.scroll_offset.x = px(0.0);
+		cx.emit(TimelineEvent::ZoomChanged(self.state.zoom));
+		cx.notify();
 	}
 
 	/// Seeks the playhead to `frame`, clamped to the sequence, emitting
@@ -1609,7 +1627,10 @@ impl<D: TimelineDataSource> Render for TimelineView<D> {
 				// positions through it); paints nothing.
 				canvas(
 					move |bounds, _window, cx| {
-						view.update(cx, |this, _cx| this.clip_area_origin = bounds.origin);
+						view.update(cx, |this, _cx| {
+							this.clip_area_origin = bounds.origin;
+							this.clip_area_width = f32::from(bounds.size.width);
+						});
 					},
 					|_bounds, (), _window, _cx| {},
 				)

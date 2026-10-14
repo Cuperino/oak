@@ -634,6 +634,8 @@
 "dialog.cancel": "取消"
 "dialog.close": "关闭"
 "dialog.ok": "确定"
+"timeline.rename.title": "重命名片段"
+"timeline.speed.title": "速度/持续时间"
 "projprops.title": "项目属性"
 "projprops.name": "项目名称"
 "projprops.ocio_config": "OpenColorIO 配置"

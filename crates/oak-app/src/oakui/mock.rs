@@ -231,6 +231,8 @@ pub struct MockClip {
 	media_in: Frame,
 	label: SharedString,
 	color: Hsla,
+	enabled: bool,
+	speed: f64,
 }
 
 impl ClipData for MockClip {
@@ -252,6 +254,10 @@ impl ClipData for MockClip {
 
 	fn color(&self) -> Option<Hsla> {
 		Some(self.color)
+	}
+
+	fn is_enabled(&self) -> bool {
+		self.enabled
 	}
 }
 
@@ -631,6 +637,8 @@ impl MockEngine {
 				media_in: Frame(media_in),
 				label: label.into(),
 				color,
+				enabled: true,
+				speed: 1.0,
 			};
 		// Clip colors follow the design's timeline: video and audio clips are
 		// green bars (#48a26d), slightly lighter for audio. The `h` argument
@@ -1294,6 +1302,8 @@ impl MockEngine {
 			media_in: Frame(source.media_in.0 + (time.0 - source.range.start.0)),
 			label: source.label.clone(),
 			color: source.color,
+			enabled: true,
+			speed: 1.0,
 		};
 		let mut first = self.tracks[track].clips[index].clone();
 		first.range = FrameRange::new(source.range.start, time);
@@ -1480,6 +1490,8 @@ impl AppEngine for MockEngine {
 				l: 0.5,
 				a: 1.0,
 			},
+			enabled: true,
+			speed: 1.0,
 		};
 		let track = &mut self.tracks[index];
 		let position = track
@@ -2063,6 +2075,330 @@ impl AppEngine for MockEngine {
 		cx.notify();
 	}
 
+	// --- Edit-menu operations (mock model) -------------------------------
+
+	fn duplicate_clips(&mut self, clips: Vec<ClipId>, cx: &mut Context<Self>) {
+		let end = clips
+			.iter()
+			.filter_map(|&id| self.mock_clip_position(id))
+			.map(|(t, i)| self.tracks[t].clips[i].range.end.0)
+			.max()
+			.unwrap_or(0);
+		// Clone each selected clip onto its own track right after the
+		// selection's end, keeping relative offsets.
+		let Some(start) = clips
+			.iter()
+			.filter_map(|&id| self.mock_clip_position(id))
+			.map(|(t, i)| self.tracks[t].clips[i].range.start.0)
+			.min()
+		else {
+			return;
+		};
+		for id in clips {
+			let Some((track, index)) = self.mock_clip_position(id) else {
+				continue;
+			};
+			if self.tracks[track].locked {
+				continue;
+			}
+			let mut copy = self.tracks[track].clips[index].clone();
+			copy.id = ClipId(self.next_mock_clip_id());
+			let offset = copy.range.start.0 - start;
+			let len = copy.range.end.0 - copy.range.start.0;
+			copy.range = FrameRange::new(Frame(end + offset), Frame(end + offset + len));
+			self.tracks[track].clips.push(copy);
+			self.tracks[track]
+				.clips
+				.sort_by_key(|c| c.range.start.0);
+		}
+		cx.notify();
+	}
+
+	fn rename_clips(&mut self, clips: Vec<ClipId>, name: String, cx: &mut Context<Self>) {
+		for id in clips {
+			if let Some((track, index)) = self.mock_clip_position(id) {
+				self.tracks[track].clips[index].label = name.clone().into();
+			}
+		}
+		cx.notify();
+	}
+
+	fn toggle_clips_enabled(&mut self, clips: Vec<ClipId>, cx: &mut Context<Self>) {
+		let first = clips
+			.iter()
+			.filter_map(|&id| self.mock_clip_position(id))
+			.map(|(t, i)| self.tracks[t].clips[i].enabled)
+			.next();
+		let Some(first) = first else {
+			return;
+		};
+		let new_state = !first;
+		for id in clips {
+			if let Some((track, index)) = self.mock_clip_position(id) {
+				self.tracks[track].clips[index].enabled = new_state;
+			}
+		}
+		cx.notify();
+	}
+
+	fn nudge_clips(&mut self, clips: Vec<ClipId>, delta: i64, cx: &mut Context<Self>) {
+		for id in clips {
+			if let Some((track, index)) = self.mock_clip_position(id) {
+				if self.tracks[track].locked {
+					continue;
+				}
+				let clip = &mut self.tracks[track].clips[index];
+				let new_start = clip.range.start.0 + delta;
+				if new_start < 0 {
+					continue;
+				}
+				let len = clip.range.end.0 - clip.range.start.0;
+				clip.range = FrameRange::new(Frame(new_start), Frame(new_start + len));
+			}
+		}
+		cx.notify();
+	}
+
+	fn trim_selection_to_playhead(
+		&mut self,
+		clips: Vec<ClipId>,
+		in_edge: bool,
+		ripple: bool,
+		cx: &mut Context<Self>,
+	) {
+		let playhead = self.clock_frame(crate::oakui::engine::Monitor::Program, cx).0;
+		for id in clips {
+			let Some((track, index)) = self.mock_clip_position(id) else {
+				continue;
+			};
+			if self.tracks[track].locked {
+				continue;
+			}
+			let (start, end) = {
+				let clip = &self.tracks[track].clips[index];
+				(clip.range.start.0, clip.range.end.0)
+			};
+			if playhead <= start || playhead >= end {
+				continue;
+			}
+			if in_edge {
+				let delta = playhead - start;
+				let clip = &mut self.tracks[track].clips[index];
+				clip.range = FrameRange::new(Frame(playhead), Frame(end));
+				clip.media_in = Frame(clip.media_in.0 + delta);
+				if ripple {
+					for later in &mut self.tracks[track].clips[index + 1..] {
+						later.range = FrameRange::new(
+							Frame(later.range.start.0 + delta),
+							Frame(later.range.end.0 + delta),
+						);
+					}
+				}
+			} else {
+				let delta = playhead - end;
+				self.tracks[track].clips[index].range =
+					FrameRange::new(Frame(start), Frame(playhead));
+				if ripple {
+					for later in &mut self.tracks[track].clips[index + 1..] {
+						later.range = FrameRange::new(
+							Frame(later.range.start.0 + delta),
+							Frame(later.range.end.0 + delta),
+						);
+					}
+				}
+			}
+		}
+		cx.notify();
+	}
+
+	fn roll_selection_to_playhead(
+		&mut self,
+		clips: Vec<ClipId>,
+		at_in: bool,
+		cx: &mut Context<Self>,
+	) {
+		let playhead = self.clock_frame(crate::oakui::engine::Monitor::Program, cx).0;
+		for id in clips {
+			let Some((track, index)) = self.mock_clip_position(id) else {
+				continue;
+			};
+			if self.tracks[track].locked {
+				continue;
+			}
+			let neighbor = if at_in {
+				index.checked_sub(1)
+			} else {
+				(index + 1 < self.tracks[track].clips.len()).then_some(index + 1)
+			};
+			let Some(ni) = neighbor else {
+				continue;
+			};
+			let (a, b) = if at_in { (ni, index) } else { (index, ni) };
+			let (a_in, b_out) = (
+				self.tracks[track].clips[a].range.start.0,
+				self.tracks[track].clips[b].range.end.0,
+			);
+			if playhead <= a_in || playhead >= b_out {
+				continue;
+			}
+			// Roll: a keeps its in, b keeps its out, the boundary moves.
+			let a_len = playhead - a_in;
+			let b_len = b_out - playhead;
+			{
+				let ca = &mut self.tracks[track].clips[a];
+				ca.range = FrameRange::new(Frame(a_in), Frame(a_in + a_len));
+			}
+			{
+				let cb = &mut self.tracks[track].clips[b];
+				let b_start = cb.range.start.0;
+				cb.media_in = Frame(cb.media_in.0 + (playhead - b_start));
+				cb.range = FrameRange::new(Frame(playhead), Frame(playhead + b_len));
+			}
+		}
+		cx.notify();
+	}
+
+	fn delete_in_to_out(&mut self, ripple: bool, cx: &mut Context<Self>) {
+		let Some((in_point, out_point)) = self.workarea else {
+			return;
+		};
+		let span = out_point.0 - in_point.0;
+		if span <= 0 {
+			return;
+		}
+		for t in 0..self.tracks.len() {
+			if self.tracks[t].locked {
+				continue;
+			}
+			// Split straddling clips at both edges, then drop the pieces
+			// fully inside the range.
+			let mut i = 0;
+			while i < self.tracks[t].clips.len() {
+				let (start, end) = (
+					self.tracks[t].clips[i].range.start.0,
+					self.tracks[t].clips[i].range.end.0,
+				);
+				if end <= in_point.0 || start >= out_point.0 {
+					i += 1;
+					continue;
+				}
+				if start >= in_point.0 && end <= out_point.0 {
+					self.tracks[t].clips.remove(i);
+					continue;
+				}
+				if start < in_point.0 && end > out_point.0 {
+					// Covering clip: split into two halves.
+					let right_id = ClipId(self.next_mock_clip_id());
+					let mut right = self.tracks[t].clips[i].clone();
+					right.id = right_id;
+					right.range = FrameRange::new(Frame(out_point.0), Frame(end));
+					right.media_in =
+						Frame(right.media_in.0 + (out_point.0 - start));
+					self.tracks[t].clips[i].range =
+						FrameRange::new(Frame(start), Frame(in_point.0));
+					self.tracks[t].clips.insert(i + 1, right);
+					i += 2;
+					continue;
+				}
+				if start < in_point.0 {
+					self.tracks[t].clips[i].range =
+						FrameRange::new(Frame(start), Frame(in_point.0));
+				} else {
+					let clip = &mut self.tracks[t].clips[i];
+					clip.media_in = Frame(clip.media_in.0 + (out_point.0 - start));
+					clip.range = FrameRange::new(Frame(out_point.0), Frame(end));
+				}
+				i += 1;
+			}
+			if ripple {
+				for clip in &mut self.tracks[t].clips {
+					if clip.range.start.0 >= out_point.0 {
+						clip.range = FrameRange::new(
+							Frame(clip.range.start.0 - span),
+							Frame(clip.range.end.0 - span),
+						);
+					}
+				}
+			}
+		}
+		cx.notify();
+	}
+
+	fn set_clips_speed(&mut self, clips: Vec<ClipId>, speed: f64, cx: &mut Context<Self>) {
+		for id in clips {
+			if let Some((track, index)) = self.mock_clip_position(id) {
+				self.tracks[track].clips[index].speed = speed;
+			}
+		}
+		cx.notify();
+	}
+
+	fn nest_clips(&mut self, clips: Vec<ClipId>, cx: &mut Context<Self>) {
+		// The mock collapses the selection into one clip labelled as the
+		// nested sequence, spanning the selection's range on the first
+		// clip's track.
+		let mut positions: Vec<(usize, usize)> = clips
+			.iter()
+			.filter_map(|&id| self.mock_clip_position(id))
+			.collect();
+		positions.sort();
+		let Some(&(first_track, _)) = positions.first() else {
+			return;
+		};
+		let (start, end, label) = {
+			let mut start = i64::MAX;
+			let mut end = i64::MIN;
+			let mut label = SharedString::new_static("Nested");
+			for &(t, i) in &positions {
+				let c = &self.tracks[t].clips[i];
+				start = start.min(c.range.start.0);
+				end = end.max(c.range.end.0);
+				if label.is_empty() {
+					label = c.label.clone();
+				}
+			}
+			(start, end, label)
+		};
+		// Remove from highest index backwards per track.
+		let mut per_track: std::collections::BTreeMap<usize, Vec<usize>> =
+			std::collections::BTreeMap::new();
+		for (t, i) in positions {
+			per_track.entry(t).or_default().push(i);
+		}
+		for (t, mut indices) in per_track {
+			if self.tracks[t].locked {
+				continue;
+			}
+			indices.sort_unstable_by(|a, b| b.cmp(a));
+			for i in indices {
+				self.tracks[t].clips.remove(i);
+			}
+		}
+		let nested = MockClip {
+			id: ClipId(self.next_mock_clip_id()),
+			range: FrameRange::new(Frame(start), Frame(end)),
+			media_in: Frame(0),
+			label,
+			color: self.tracks[first_track]
+				.clips
+				.first()
+				.map(|c| c.color)
+				.unwrap_or(Hsla {
+					h: 0.402,
+					s: 0.385,
+					l: 0.459,
+					a: 1.0,
+				}),
+			enabled: true,
+			speed: 1.0,
+		};
+		self.tracks[first_track].clips.push(nested);
+		self.tracks[first_track]
+			.clips
+			.sort_by_key(|c| c.range.start.0);
+		cx.notify();
+	}
+
 	fn can_undo(&self) -> bool {
 		// The mock keeps no undo stack; the real engine's facade stack drives
 		// the Edit menu in real mode.
@@ -2195,6 +2531,8 @@ impl AppEngine for MockEngine {
 				l: 0.459,
 				a: 1.0,
 			},
+			enabled: true,
+			speed: 1.0,
 		};
 		let track = &mut self.tracks[target];
 		let position = track
@@ -2282,6 +2620,8 @@ impl AppEngine for MockEngine {
 					a: 1.0,
 				}
 			},
+			enabled: true,
+			speed: 1.0,
 		};
 		// Keep the track's clips in ascending frame order (a data-source
 		// consistency requirement of the timeline widget).

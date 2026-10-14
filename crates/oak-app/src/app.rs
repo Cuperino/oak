@@ -153,6 +153,10 @@ mod modal_ids {
 	pub const SAVE_AS: usize = 21;
 	/// The update-available prompt (the startup update check).
 	pub const UPDATE_AVAILABLE: usize = 22;
+	/// The clip rename prompt (编辑 → 重命名 on the timeline).
+	pub const CLIP_RENAME: usize = 23;
+	/// The speed/duration prompt (编辑 → 速度/持续时间 on the timeline).
+	pub const CLIP_SPEED: usize = 24;
 }
 
 /// What a picked platform-dialog path should do.
@@ -199,6 +203,18 @@ enum ModalState<E: AppEngine> {
 		modal: Entity<Modal>,
 		content: Entity<crate::manager::NamePrompt>,
 		uuid: String,
+	},
+	/// The timeline's clip rename prompt (编辑 → 重命名).
+	ClipRename {
+		modal: Entity<Modal>,
+		content: Entity<crate::manager::NamePrompt>,
+		clips: Vec<ClipId>,
+	},
+	/// The timeline's speed/duration prompt (编辑 → 速度/持续时间).
+	ClipSpeed {
+		modal: Entity<Modal>,
+		content: Entity<crate::manager::NamePrompt>,
+		clips: Vec<ClipId>,
 	},
 	/// The manager's delete confirmation.
 	ManagerDelete {
@@ -294,6 +310,8 @@ impl<E: AppEngine> ModalState<E> {
 			| ModalState::Progress { modal, .. }
 			| ModalState::Manager { modal, .. }
 			| ModalState::ManagerRename { modal, .. }
+			| ModalState::ClipRename { modal, .. }
+			| ModalState::ClipSpeed { modal, .. }
 			| ModalState::ManagerDelete { modal, .. }
 			| ModalState::Proxy { modal, .. }
 			| ModalState::ActionSearch { modal, .. }
@@ -372,8 +390,6 @@ pub struct OakApp<E: AppEngine> {
 	/// 回放 → 循环播放 is on (the C++ `Loop` config flag; playback looping
 	/// itself is a transport gap, so this only drives the checkmark).
 	loop_playback: bool,
-	/// 视图 → Toggle Show All is on (placeholder state for the checkmark).
-	show_all: bool,
 	/// 视图 → Full Screen is on (placeholder state for the checkmark).
 	full_screen: bool,
 	/// A checked-but-unshown newer release: the startup check can finish
@@ -660,6 +676,23 @@ impl<E: AppEngine> OakApp<E> {
 		)
 		.detach();
 
+		// The timeline's dialog requests (rename / speed prompts) open as
+		// shell modals; the result lands through the engine.
+		cx.subscribe(
+			&panels.timeline,
+			|this, _panel, event: &crate::panels::timeline::TimelineDialogRequest, cx| {
+				match event {
+					crate::panels::timeline::TimelineDialogRequest::Rename { clips } => {
+						this.open_clip_rename(clips.clone(), cx);
+					}
+					crate::panels::timeline::TimelineDialogRequest::Speed { clips } => {
+						this.open_clip_speed(clips.clone(), cx);
+					}
+				}
+			},
+		)
+		.detach();
+
 		// The viewer panels re-emit their monitor-level requests (full-screen
 		// and the loop in/out range) for the shell to apply: full-screen
 		// toggles the window, and the in/out/clear requests act on the shared
@@ -795,7 +828,6 @@ impl<E: AppEngine> OakApp<E> {
 			active_tool: Tool::Pointer,
 			last_timeline_tool: crate::widgets::timeline::TimelineTool::Select,
 			loop_playback: false,
-			show_all: false,
 			full_screen: false,
 			pending_update: None,
 			update_transport: Arc::new(crate::update::HttpTransport),
@@ -1072,9 +1104,12 @@ impl<E: AppEngine> OakApp<E> {
 			A::IncreaseTrackHeight => self.nudge_track_height(8.0, cx),
 			A::DecreaseTrackHeight => self.nudge_track_height(-8.0, cx),
 			A::ToggleShowAll => {
-				self.show_all = !self.show_all;
-				println!("[view] toggle show all: {} (placeholder)", self.show_all);
-				self.rebuild_menu_bar(cx);
+				// 视图 → 显示全部: zoom the timeline strip so the whole
+				// sequence fits (the widget tracks its clip-area width).
+				let timeline = self.panels.timeline.clone();
+				timeline.update(cx, |panel, cx| {
+					crate::panels::commands::PanelCommandHandler::toggle_show_all(panel, cx)
+				});
 			}
 			A::FullScreen => self.toggle_full_screen(cx),
 			A::Preferences => self.open_preferences(cx),
@@ -1758,7 +1793,6 @@ impl<E: AppEngine> OakApp<E> {
 			active_tool: self.active_tool,
 			snapping: self.timeline.read(cx).state.snap_enabled,
 			loop_playback: self.loop_playback,
-			show_all: self.show_all,
 			full_screen: self.full_screen,
 			use_proxy_media: self.engine.read(cx).use_proxy_media(),
 			// The 窗口 menu's checkmarks mirror the dock's live visible panel
@@ -1917,6 +1951,55 @@ impl<E: AppEngine> OakApp<E> {
 				modal,
 				content,
 				uuid,
+			}
+		});
+	}
+
+	/// 编辑 → 重命名 (timeline): prompt for the selected clips' new name.
+	fn open_clip_rename(&mut self, clips: Vec<ClipId>, cx: &mut Context<Self>) {
+		self.spawn_modal(cx, move |window, app| {
+			let content = app.new(|cx| crate::manager::NamePrompt::new("", window, cx));
+			let modal = app
+				.new(|cx| {
+					Modal::new(
+						modal_ids::CLIP_RENAME,
+						ModalOptions::new(crate::i18n::tr("timeline.rename.title"), px(380.0))
+							.with_button(DialogButton::primary(crate::i18n::tr("dialog.ok")))
+							.with_button(DialogButton::cancel(crate::i18n::tr("dialog.cancel"))),
+						window,
+						cx,
+					)
+					.with_content(content.clone())
+				});
+			ModalState::ClipRename {
+				modal,
+				content,
+				clips,
+			}
+		});
+	}
+
+	/// 编辑 → 速度/持续时间 (timeline): prompt for the speed factor (1.0 =
+	/// 100%).
+	fn open_clip_speed(&mut self, clips: Vec<ClipId>, cx: &mut Context<Self>) {
+		self.spawn_modal(cx, move |window, app| {
+			let content = app.new(|cx| crate::manager::NamePrompt::new("1.0", window, cx));
+			let modal = app
+				.new(|cx| {
+					Modal::new(
+						modal_ids::CLIP_SPEED,
+						ModalOptions::new(crate::i18n::tr("timeline.speed.title"), px(380.0))
+							.with_button(DialogButton::primary(crate::i18n::tr("dialog.ok")))
+							.with_button(DialogButton::cancel(crate::i18n::tr("dialog.cancel"))),
+						window,
+						cx,
+					)
+					.with_content(content.clone())
+				});
+			ModalState::ClipSpeed {
+				modal,
+				content,
+				clips,
 			}
 		});
 	}
@@ -3208,6 +3291,41 @@ impl<E: AppEngine> OakApp<E> {
 						self.back_to_manager(cx);
 					}
 				}
+				modal_ids::CLIP_RENAME => {
+					if *button == 0 {
+						if let ModalState::ClipRename { content, clips, .. } = &self.modal {
+							let name = content.read(cx).value(cx);
+							let clips = clips.clone();
+							if !name.is_empty() {
+								self.engine.update(cx, |engine, cx| {
+									engine.rename_clips(clips, name, cx)
+								});
+							}
+						}
+					}
+					self.close_modal(cx);
+				}
+				modal_ids::CLIP_SPEED => {
+					if *button == 0 {
+						if let ModalState::ClipSpeed { content, clips, .. } = &self.modal {
+							let text = content.read(cx).value(cx);
+							// Accept "2", "2.0", "200%" — a percent sign
+							// divides by 100.
+							let parsed = text
+								.strip_suffix('%')
+								.and_then(|p| p.trim().parse::<f64>().ok())
+								.map(|p| p / 100.0)
+								.or_else(|| text.parse::<f64>().ok());
+							if let Some(speed) = parsed.filter(|v| v.is_finite() && *v > 0.0) {
+								let clips = clips.clone();
+								self.engine.update(cx, |engine, cx| {
+									engine.set_clips_speed(clips, speed, cx)
+								});
+							}
+						}
+					}
+					self.close_modal(cx);
+				}
 				modal_ids::PROXY => {
 					if let ModalState::Proxy { content, .. } = &self.modal {
 						let content = content.clone();
@@ -3573,7 +3691,6 @@ struct MenuState {
 	active_tool: Tool,
 	snapping: bool,
 	loop_playback: bool,
-	show_all: bool,
 	full_screen: bool,
 	use_proxy_media: bool,
 	/// Bitmask of the dock panels currently visible (docked or floating), one
@@ -3592,7 +3709,6 @@ impl MenuState {
 			active_tool: Tool::Pointer,
 			snapping: true,
 			loop_playback: false,
-			show_all: false,
 			full_screen: false,
 			use_proxy_media: oak_core::configstore::ConfigStore::instance().get_bool(
 				None,
@@ -3753,7 +3869,7 @@ fn make_menus(state: MenuState) -> Vec<MenuBarEntry> {
 				menu_item(A::ZoomOut),
 				menu_item(A::IncreaseTrackHeight),
 				menu_item(A::DecreaseTrackHeight).separated(),
-				menu_item(A::ToggleShowAll).with_checked(state.show_all),
+				menu_item(A::ToggleShowAll),
 				menu_item(A::FullScreen).with_checked(state.full_screen),
 				menu_item(A::FullScreenViewer),
 			]),
@@ -6377,16 +6493,11 @@ mod tests {
 		let mut state = MenuState::new(true);
 		state.snapping = false;
 		state.loop_playback = true;
-		state.show_all = true;
 		state.full_screen = true;
 		state.use_proxy_media = false;
 		let menus = make_menus(state);
 		assert_eq!(menu_checked(&menus, ActionId::Snapping.menu_id()), Some(false));
 		assert_eq!(menu_checked(&menus, ActionId::Loop.menu_id()), Some(true));
-		assert_eq!(
-			menu_checked(&menus, ActionId::ToggleShowAll.menu_id()),
-			Some(true)
-		);
 		assert_eq!(
 			menu_checked(&menus, ActionId::FullScreen.menu_id()),
 			Some(true)
@@ -6397,16 +6508,11 @@ mod tests {
 		);
 		state.snapping = true;
 		state.loop_playback = false;
-		state.show_all = false;
 		state.full_screen = false;
 		state.use_proxy_media = true;
 		let menus = make_menus(state);
 		assert_eq!(menu_checked(&menus, ActionId::Snapping.menu_id()), Some(true));
 		assert_eq!(menu_checked(&menus, ActionId::Loop.menu_id()), Some(false));
-		assert_eq!(
-			menu_checked(&menus, ActionId::ToggleShowAll.menu_id()),
-			Some(false)
-		);
 		assert_eq!(
 			menu_checked(&menus, ActionId::FullScreen.menu_id()),
 			Some(false)
@@ -7039,10 +7145,26 @@ mod tests {
 		assert_eq!(height(cx), height_before + 8.0);
 		dispatch(cx, ActionId::DecreaseTrackHeight);
 		assert_eq!(height(cx), height_before);
+		// 显示全部 zooms the timeline strip to fit the sequence.
+		let timeline_zoom = |cx: &mut TestAppContext| {
+			cx.read(|app| {
+				root.read(app)
+					.panels
+					.timeline
+					.read(app)
+					.test_timeline()
+					.read(app)
+					.state
+					.zoom
+			})
+		};
+		let zoom_before = timeline_zoom(cx);
 		dispatch(cx, ActionId::ToggleShowAll);
-		assert!(cx.read(|app| root.read(app).show_all));
-		dispatch(cx, ActionId::ToggleShowAll);
-		assert!(!cx.read(|app| root.read(app).show_all));
+		let zoom_after = timeline_zoom(cx);
+		assert_ne!(
+			zoom_before, zoom_after,
+			"show-all fits the sequence (zoom changes)"
+		);
 		dispatch(cx, ActionId::Loop);
 		assert!(cx.read(|app| root.read(app).loop_playback));
 		dispatch(cx, ActionId::Loop);
@@ -8724,6 +8846,73 @@ mod tests {
 	/// unknown control id), and a dismissed manager sub-dialog with no
 	/// manager falls back to opening it.
 	#[gpui_kit::test]
+	/// 编辑 → 重命名 on the timeline opens the shell's rename modal; OK
+	/// applies the name through the engine (one real edit, not a
+	/// placeholder).
+	#[gpui_kit::test]
+	async fn clip_rename_dialog_renames_the_selection(cx: &mut TestAppContext) {
+		let _guard = crate::actions::shortcuts_test_lock()
+			.lock()
+			.unwrap_or_else(|e| e.into_inner());
+		let _guard = crate::i18n::lang_test_lock()
+			.lock()
+			.unwrap_or_else(|e| e.into_inner());
+		let (_window, root) = mock_shell(cx);
+
+		// Select the first demo clip on the timeline and request the rename.
+		let clip = cx.read(|app| {
+			let engine = root.read(app).engine.clone();
+			let track = engine.read(app).track(0).expect("first track");
+			track.clips()[0].id()
+		});
+		cx.update(|app| {
+			root.update(app, |app, cx| {
+				let timeline = app.panels.timeline.clone();
+				timeline.update(cx, |panel, cx| {
+					let view = panel.test_timeline();
+					view.update(cx, |t, cx| {
+						t.state.clear_selection();
+						t.state.select(clip);
+						cx.notify();
+					});
+					crate::panels::commands::PanelCommandHandler::rename_selected(panel, cx);
+				});
+			});
+		});
+		cx.run_until_parked();
+
+		// The rename modal is open; type the new name and confirm.
+		let prompt = cx.read(|app| match &root.read(app).modal {
+			ModalState::ClipRename { content, .. } => content.clone(),
+			_ => panic!("the clip rename prompt should be open"),
+		});
+		cx.update_window(_window.into(), |_, window, app| {
+			prompt.update(app, |p, cx| p.set_value("新片段名", window, cx));
+		})
+		.expect("window open");
+		cx.update(|app| {
+			root.update(app, |app, cx| {
+				app.on_modal(
+					&ModalEvent::ButtonClicked {
+						control: modal_ids::CLIP_RENAME,
+						button: 0,
+					},
+					cx,
+				);
+			});
+		});
+		cx.run_until_parked();
+
+		// The clip carries the new label and the modal is gone.
+		let label = cx.read(|app| {
+			let engine = root.read(app).engine.clone();
+			let track = engine.read(app).track(0).expect("first track");
+			track.clips()[0].label().to_string()
+		});
+		assert_eq!(label, "新片段名");
+		assert!(cx.read(|app| root.read(app).modal.modal_entity().is_none()));
+	}
+
 	async fn on_modal_state_mismatches_are_inert(cx: &mut TestAppContext) {
 		let _guard = crate::actions::shortcuts_test_lock()
 			.lock()
