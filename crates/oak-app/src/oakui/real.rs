@@ -4687,7 +4687,15 @@ impl AppEngine for RealEngine {
 			}
 			_ => {
 				if let (Some(project), Some(seq)) = (self.project.clone(), self.sequence) {
-					let result = crate::oakui::nodegraph::apply_edit(&project, seq, event);
+					// The node editor shows the selected clip's chain while
+					// one is selected; the move base must come from that
+					// view's fallback grid, not the whole-sequence one.
+					let result = crate::oakui::nodegraph::apply_edit_in_view(
+						&project,
+						seq,
+						self.selected_clip.map(|clip| clip.0),
+						event,
+					);
 					if let Err(e) = result {
 						println!("[real engine] node-graph request rejected: {e}");
 					}

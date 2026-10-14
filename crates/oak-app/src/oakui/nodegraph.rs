@@ -673,15 +673,30 @@ fn role_of(type_id: &str, is_output: bool) -> u32 {
 /// `apply_edit` uses it so the first drag release writes
 /// `(displayed base + delta)` instead of `(origin + delta)`.
 fn fallback_base(g: &oak_node::graph::Graph, seq: DomainNodeId, ident: u64) -> (f64, f64) {
+	fallback_base_in(g, seq, &graph_nodes(g, seq), ident)
+		.expect("the moved node is part of the displayed graph")
+}
+
+/// The provisional position an unplaced node displays at within
+/// `displayed` (the node editor's current view, in display order): the
+/// role-grid base mirroring the fallback layout in `build_graph_impl`.
+/// `None` when the node is not part of that view — the caller falls back
+/// to the whole-sequence grid.
+///
+/// The view matters: the per-clip chain shows a subset, so a clip card at
+/// the chain's row 0 can sit at row N of the full-sequence grid; taking
+/// the base from the wrong grid teleports the card on the first drag.
+fn fallback_base_in(
+	g: &oak_node::graph::Graph,
+	seq: DomainNodeId,
+	displayed: &[TypedNode],
+	ident: u64,
+) -> Option<(f64, f64)> {
 	let seq_ident = seq.identity();
-	let all = graph_nodes(g, seq);
-	let target = all
-		.iter()
-		.find(|n| n.ident == ident)
-		.expect("the moved node is part of the displayed graph");
+	let target = displayed.iter().find(|n| n.ident == ident)?;
 	let target_role = role_of(&target.type_id, ident == seq_ident);
 	let mut row: u32 = 0;
-	for n in &all {
+	for n in displayed {
 		if n.ident == ident {
 			break;
 		}
@@ -762,9 +777,23 @@ pub fn can_connect(project: &ProjectRef, from: PortId, to: PortId) -> bool {
 pub fn apply_edit(
 	project: &ProjectRef,
 	seq: DomainNodeId,
-	edit: &gpui::node_graph::NodeGraphEvent,
+	edit: &crate::widgets::node_graph::NodeGraphEvent,
 ) -> Result<(), String> {
-	use gpui::node_graph::NodeGraphEvent;
+	apply_edit_in_view(project, seq, None, edit)
+}
+
+/// [`apply_edit`] with the node editor's current view: while one clip is
+/// selected the editor shows that clip's context chain (footage → effects
+/// → clip), and the node-move fallback base must come from THAT view's
+/// grid — taking it from the whole-sequence grid teleports the card on
+/// the first drag release. `clip` is the selected clip's identity.
+pub fn apply_edit_in_view(
+	project: &ProjectRef,
+	seq: DomainNodeId,
+	clip: Option<u64>,
+	edit: &crate::widgets::node_graph::NodeGraphEvent,
+) -> Result<(), String> {
+	use crate::widgets::node_graph::NodeGraphEvent;
 	match edit {
 		NodeGraphEvent::ConnectionRequested { from, to } => {
 			let (from_node, from_kind, _) = unpack_port(*from);
@@ -829,7 +858,10 @@ pub fn apply_edit(
 						.filter(|(x, y)| *x != 0.0 || *y != 0.0);
 					let base = match placed {
 						Some(pos) => pos,
-						None => fallback_base(g, seq, node.0),
+						None => clip
+							.and_then(|ident| graphops::id_of(ident))
+							.and_then(|clip| fallback_base_in(g, seq, &clip_context_nodes(g, clip), node.0))
+							.unwrap_or_else(|| fallback_base(g, seq, node.0)),
 					};
 					(id, base)
 				};
@@ -1418,6 +1450,83 @@ mod tests {
 			},
 		)
 		.is_err());
+
+		oak_undo::global::clear().unwrap();
+	}
+
+	/// Regression: in the per-clip view the first move of an unplaced node
+	/// must start from the base the VIEW displays (the chain-local fallback
+	/// grid), not the whole-sequence grid — the second clip's card sits at
+	/// row 0 of its own chain but row 1 of the full grid, and the wrong
+	/// grid teleported the card down on the first drag release.
+	#[test]
+	fn move_in_clip_view_uses_the_chain_local_fallback() {
+		let _g = stack_lock();
+		oak_undo::global::clear().unwrap();
+		let (project, seq, _clip_a, _effect, _footage) = project_with_chained_clip();
+		// A second, bare clip node: the full view's fallback grid now has
+		// two clip-role rows (A at 0, B at 1), B's own chain view has one.
+		let clip_b = {
+			let mut g = graphops::lock(&project);
+			let (core, behavior) = oak_node::block::clip_create();
+			g.graph.add_node(core, behavior)
+		};
+
+		apply_edit_in_view(
+			&project,
+			seq,
+			Some(clip_b.identity()),
+			&NodeGraphEvent::NodeMoveRequested {
+				nodes: vec![NodeId(clip_b.identity())],
+				delta: point(px(10.0), px(20.0)),
+			},
+		)
+		.expect("the move applies");
+		let moved = {
+			let g = graphops::lock(&project);
+			g.graph
+				.get(clip_b)
+				.expect("clip B")
+				.core
+				.context_positions
+				.iter()
+				.find(|(c, _, _)| *c == seq)
+				.map(|(_, pos, _)| *pos)
+				.expect("the position was persisted")
+		};
+		// Column 2 (clip role), row 0 — the chain-local base, plus delta.
+		// The full-grid base would have been row 1 → y = 240.
+		assert_eq!(moved, (570.0, 60.0), "chain-local base, not full-grid row 1");
+
+		// Sanity: the old whole-sequence path would have teleported the
+		// card to row 1 (y = 240) — prove the grids actually differ.
+		let clip_c = {
+			let mut g = graphops::lock(&project);
+			let (core, behavior) = oak_node::block::clip_create();
+			g.graph.add_node(core, behavior)
+		};
+		apply_edit(
+			&project,
+			seq,
+			&NodeGraphEvent::NodeMoveRequested {
+				nodes: vec![NodeId(clip_c.identity())],
+				delta: point(px(10.0), px(20.0)),
+			},
+		)
+		.expect("the move applies");
+		let moved_c = {
+			let g = graphops::lock(&project);
+			g.graph
+				.get(clip_c)
+				.expect("clip C")
+				.core
+				.context_positions
+				.iter()
+				.find(|(c, _, _)| *c == seq)
+				.map(|(_, pos, _)| *pos)
+				.expect("the position was persisted")
+		};
+		assert_eq!(moved_c, (570.0, 240.0), "the full grid puts C at row 1");
 
 		oak_undo::global::clear().unwrap();
 	}

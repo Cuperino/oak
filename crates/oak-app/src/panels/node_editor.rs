@@ -634,7 +634,92 @@ mod tests {
 
 	/// The panel lays out a graph canvas below the zoom toolbar, and the
 	/// initial fit centers the graph so every demo node is on screen.
-	#[gpui::test]
+	/// Regression: dragging a node moves it by exactly the pointer
+	/// displacement in graph units — the first mouse-move must not
+	/// teleport the card (a canvas origin change between press and move
+	/// would add the whole panel offset to the drag delta).
+	#[gpui_kit::test]
+	async fn node_drag_moves_by_the_pointer_delta(cx: &mut TestAppContext) {
+		use crate::widgets::node_graph::{NodeData as _, NodeElement, NodeVisualState};
+
+		let (cx, panel) = panel_window(cx);
+		let canvas = cx
+			.debug_bounds("node-editor-canvas")
+			.expect("graph canvas rendered");
+
+		// Pick a node whose card center is covered by no other card (so the
+		// press hits it on top), then aim at the card body center (clear of
+		// the header toggles and the edge ports).
+		let (engine, target_id, press, zoom) = cx.read(|app| {
+			let panel = panel.read(app);
+			let graph = panel.graph.read(app);
+			let state = graph.state().clone();
+			let zoom = state.zoom();
+			let nodes = graph.data().read(app).nodes();
+			let card = |n: &<MockEngine as NodeGraphDataSource>::Node| {
+				let element = NodeElement::from_node(n, NodeVisualState::default());
+				gpui_kit::Bounds::new(
+					state.graph_to_screen(n.position()),
+					gpui_kit::size(
+						crate::widgets::node_graph::DEFAULT_NODE_WIDTH * zoom,
+						element.height() * zoom,
+					),
+				)
+			};
+			let (node, bounds) = nodes
+				.iter()
+				.map(|n| (n, card(n)))
+				.find(|(n, bounds)| {
+					let center = bounds.center();
+					nodes
+						.iter()
+						.filter(|other| other.id() != n.id())
+						.all(|other| !card(other).contains(&center))
+				})
+				.expect("a demo node with an uncovered card center");
+			(
+				panel.engine.clone(),
+				node.id(),
+				canvas.origin + bounds.center(),
+				zoom,
+			)
+		});
+
+		let position_of = |app: &gpui_kit::App| {
+			engine
+				.read(app)
+				.nodes()
+				.into_iter()
+				.find(|n| n.id() == target_id)
+				.expect("the aimed node")
+				.position()
+		};
+		let before = cx.read(|app| position_of(app));
+
+		cx.simulate_mouse_down(press, gpui_kit::MouseButton::Left, gpui_kit::Modifiers::default());
+		let target = press + gpui_kit::point(gpui_kit::px(10.0), gpui_kit::px(6.0));
+		cx.simulate_mouse_move(target, gpui_kit::MouseButton::Left, gpui_kit::Modifiers::default());
+		cx.simulate_mouse_up(target, gpui_kit::MouseButton::Left, gpui_kit::Modifiers::default());
+		cx.run_until_parked();
+
+		let after = cx.read(|app| position_of(app));
+		let dx = after.x.as_f32() - before.x.as_f32();
+		let dy = after.y.as_f32() - before.y.as_f32();
+		assert!(
+			(dx - 10.0 / zoom).abs() < 1.0,
+			"x tracks the pointer (dx {dx}, expected {})",
+			10.0 / zoom
+		);
+		assert!(
+			(dy - 6.0 / zoom).abs() < 1.0,
+			"y tracks the pointer (dy {dy}, expected {})",
+			6.0 / zoom
+		);
+	}
+
+	/// The panel lays out a graph canvas below the zoom toolbar, and the
+	/// initial fit centers the graph so every demo node is on screen.
+	#[gpui_kit::test]
 	async fn canvas_fills_the_panel_below_the_toolbar(cx: &mut TestAppContext) {
 		let (cx, panel) = panel_window(cx);
 
