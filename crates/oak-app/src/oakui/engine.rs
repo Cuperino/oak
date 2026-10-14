@@ -681,6 +681,12 @@ pub trait AppEngine:
 	fn delete_in_to_out(&mut self, _ripple: bool, _cx: &mut Context<Self>) {}
 	/// Set the clips' speed (span unchanged; C++ Speed/Duration).
 	fn set_clips_speed(&mut self, _clips: Vec<ClipId>, _speed: f64, _cx: &mut Context<Self>) {}
+	/// Bracket a multi-write parameter gesture (a color-wheel drag) so its
+	/// per-move writes land in ONE undo entry. Default no-ops for engines
+	/// without an undo stack.
+	fn begin_param_drag(&mut self, _name: &str, _cx: &mut Context<Self>) {}
+	/// Close the gesture's undo group (see [`Self::begin_param_drag`]).
+	fn end_param_drag(&mut self, _cx: &mut Context<Self>) {}
 	/// Nest the clips into a new sequence and replace them with one
 	/// nested clip (C++ Nest).
 	fn nest_clips(&mut self, _clips: Vec<ClipId>, _cx: &mut Context<Self>) {}

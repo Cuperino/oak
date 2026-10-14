@@ -5437,6 +5437,23 @@ impl AppEngine for RealEngine {
 		);
 	}
 
+	/// Open an undo group for a multi-write parameter gesture (a
+	/// color-wheel drag's per-move writes join it, closing as one entry).
+	fn begin_param_drag(&mut self, name: &str, cx: &mut Context<Self>) {
+		if let Err(e) = oak_undo::global::group_begin(name) {
+			println!("[real engine] begin param drag: {e}");
+		}
+		cx.notify();
+	}
+
+	/// Close the gesture's undo group.
+	fn end_param_drag(&mut self, cx: &mut Context<Self>) {
+		if let Err(e) = oak_undo::global::group_end() {
+			println!("[real engine] end param drag: {e}");
+		}
+		cx.notify();
+	}
+
 	/// Set the clips' speed, span unchanged (C++ Speed/Duration).
 	fn set_clips_speed(&mut self, clips: Vec<ClipId>, speed: f64, cx: &mut Context<Self>) {
 		let Some(project) = self.project.clone() else {

@@ -54,6 +54,7 @@ use crate::oakui::component::controls::{Slider, SliderEvent, SliderModel, Slider
 use crate::oakui::component::controls::{SpinBox, SpinBoxEvent};
 use gpui_kit::colors::DefaultColors;
 use crate::widgets::theme::{accent_hover, neutral_hover};
+use crate::widgets::color_wheel::{ColorWheel, ColorWheelEvent};
 use crate::widgets::effect_stack::EffectId;
 use gpui_kit::{
 	anchored, canvas, deferred, fill, Anchor, App, Bounds, ElementId, Hsla, KeyDownEvent,
@@ -147,6 +148,10 @@ enum ControlKind {
 	Spin(Vec<(Entity<SpinBox>, usize)>),
 	/// A colour swatch + popup picker (color).
 	Color(Entity<OfxColorPicker>),
+	/// The three-way corrector's wheel group: one grading wheel per tonal
+	/// band (shadows / midtones / highlights), replacing the three generic
+	/// colour pickers. Each entry is (wheel, input id, label).
+	WheelGroup(Vec<(Entity<ColorWheel>, String, SharedString)>),
 	/// A text field: single-line by default, multi-line when the param
 	/// carries the `("multiline", true)` property (the v3 text node's text
 	/// inputs; the inspector then builds a `text_area`).
@@ -182,15 +187,38 @@ impl<E: AppEngine> OfxParamsView<E> {
 	) -> Self {
 		let params = engine.read(cx).effect_params(effect).unwrap_or_default();
 		let mut control_id = 0usize;
-		let controls = params
+		// The three-way corrector's colour params get the grading wheels
+		// instead of three swatch pickers (the structural signature is the
+		// three input ids; the amounts stay ordinary sliders).
+		let wheel_ids = three_way_color_ids(&params);
+		let mut wheels_done = false;
+		let mut controls = Vec::new();
+		for param in params
 			.iter()
 			// The built-in facade already drops hidden inputs, but a plugin
 			// or mock engine's snapshot can carry them; a secret input must
 			// never reach the inspector, so filter here as well (the params
 			// view is the last stop before a control is built).
 			.filter(|param| param.flags & oak_node::input::flags::HIDDEN == 0)
-			.map(|param| build_control(param, &mut control_id, window, cx))
-			.collect();
+		{
+			if let Some(ids) = &wheel_ids {
+				if ids.iter().any(|(id, _)| id == &param.input_id) {
+					if !wheels_done {
+						wheels_done = true;
+						controls.push(build_wheel_group(
+							&params,
+							ids,
+							&mut control_id,
+							crate::oakui::effectchain::ui_section_of(param),
+							window,
+							cx,
+						));
+					}
+					continue;
+				}
+			}
+			controls.push(build_control(param, &mut control_id, window, cx));
+		}
 
 		let this = Self {
 			engine,
@@ -216,10 +244,33 @@ impl<E: AppEngine> OfxParamsView<E> {
 			.effect_params(self.effect)
 			.unwrap_or_default();
 		for control in &self.controls {
+			// The wheel group's members each sync from their own param (the
+			// group's row-level input id matches only the first band).
+			if let ControlKind::WheelGroup(wheels) = &control.kind {
+				for (wheel, input_id, _) in wheels {
+					let Some(param) = params.iter().find(|p| &p.input_id == input_id) else {
+						continue;
+					};
+					if let NodeValue::Color(v) = param.value {
+						let color = Rgba {
+							r: v[0] as f32,
+							g: v[1] as f32,
+							b: v[2] as f32,
+							a: v[3] as f32,
+						};
+						let wheel = wheel.clone();
+						wheel.update(cx, |wheel, cx| wheel.set_value(color, cx));
+					}
+				}
+				continue;
+			}
 			let Some(param) = params.iter().find(|p| p.input_id == control.input_id) else {
 				continue;
 			};
 			match &control.kind {
+				ControlKind::WheelGroup(_) => {
+					// handled above the match (per-wheel params)
+				}
 				ControlKind::Slider(slider) => {
 					// Never re-sync mid-drag: the engine read-back would
 					// fight the pointer (the thumb stops following).
@@ -802,6 +853,61 @@ fn scale_by_pow10(m: f64, exp: i32) -> f64 {
 
 /// Builds one [`ParamControl`] for `param`, creating the control entities
 /// (each consuming one control id from `next_id`).
+/// The three-way corrector's colour input ids (oak-node's
+/// `threewaycolor` module is private; these are its stable C++ ids).
+const THREE_WAY_COLOR_IDS: [&str; 3] = [
+	"shadows_color_in",
+	"midtones_color_in",
+	"highlights_color_in",
+];
+
+/// The three-way corrector's structural signature: all three tonal-band
+/// colour params present. Returns `(input id, label)` per band when the
+/// effect is one.
+fn three_way_color_ids(
+	params: &[crate::oakui::engine::EffectParam],
+) -> Option<[(String, String); 3]> {
+	let mut out: [(String, String); 3] = Default::default();
+	for (slot, id) in THREE_WAY_COLOR_IDS.iter().enumerate() {
+		let param = params.iter().find(|p| p.input_id == *id)?;
+		out[slot] = (id.to_string(), param.display_name.clone());
+	}
+	Some(out)
+}
+
+/// Build the wheel group control for a three-way corrector: one grading
+/// wheel per band, labelled with the param's (localized) display name.
+fn build_wheel_group<E: AppEngine>(
+	params: &[crate::oakui::engine::EffectParam],
+	ids: &[(String, String); 3],
+	next_id: &mut usize,
+	section: Option<(String, String)>,
+	window: &mut Window,
+	cx: &mut Context<OfxParamsView<E>>,
+) -> ParamControl {
+	let mut wheels = Vec::new();
+	for (input_id, label) in ids {
+		let param = params.iter().find(|p| &p.input_id == input_id);
+		let components = param.map(|p| value_components(&p.value)).unwrap_or_default();
+		let color = Rgba {
+			r: components.first().copied().unwrap_or(0.5) as f32,
+			g: components.get(1).copied().unwrap_or(0.5) as f32,
+			b: components.get(2).copied().unwrap_or(0.5) as f32,
+			a: components.get(3).copied().unwrap_or(1.0) as f32,
+		};
+		let wheel = cx.new(|cx| ColorWheel::new(*next_id, color, cx));
+		*next_id += 1;
+		wheels.push((wheel, input_id.clone(), SharedString::from(label.clone())));
+	}
+	ParamControl {
+		input_id: ids[0].0.clone(),
+		display_name: ids[0].1.clone(),
+		section,
+		kind: ControlKind::WheelGroup(wheels),
+		curve_domain: None,
+	}
+}
+
 fn build_control<E: AppEngine>(
 	param: &EffectParam,
 	next_id: &mut usize,
@@ -987,6 +1093,48 @@ fn wire_controls<E: AppEngine>(view: &OfxParamsView<E>, cx: &mut Context<OfxPara
 		let effect = view.effect;
 		let engine = view.engine.clone();
 		match &control.kind {
+			ControlKind::WheelGroup(wheels) => {
+				for (wheel, input_id, _label) in wheels {
+					let wheel = wheel.clone();
+					let input_id = input_id.clone();
+					let engine = engine.clone();
+					cx.subscribe(
+						&wheel,
+						move |_, _, event: &ColorWheelEvent, cx| match event {
+							// A wheel drag is ONE undo entry: the group
+							// opens on DragStarted and closes on
+							// DragFinished, with every move's write in it.
+							ColorWheelEvent::DragStarted { .. } => {
+								engine.update(cx, |engine, cx| {
+									engine.begin_param_drag("set parameter", cx)
+								});
+							}
+							ColorWheelEvent::Changed { color, .. } => {
+								let (color, input_id) = (*color, input_id.clone());
+								engine.update(cx, |engine, cx| {
+									if let Err(err) = engine.set_effect_param(
+										effect,
+										&input_id,
+										NodeValue::Color([
+											color.r as f64,
+											color.g as f64,
+											color.b as f64,
+											color.a as f64,
+										]),
+										cx,
+									) {
+										eprintln!("[ofx params] set {input_id:?} failed: {err}");
+									}
+								});
+							}
+							ColorWheelEvent::DragFinished { .. } => {
+								engine.update(cx, |engine, cx| engine.end_param_drag(cx));
+							}
+						},
+					)
+					.detach();
+				}
+			}
 			ControlKind::Slider(slider) => {
 				let slider = slider.clone();
 				cx.subscribe(
@@ -1258,7 +1406,15 @@ impl<E: AppEngine> Render for OfxParamsView<E> {
 					.w(px(110.0))
 					.text_sm()
 					.text_color(colors.text)
-					.child(control.display_name.clone());
+					.child(
+						// The wheel group captions each wheel instead of a
+						// single row label.
+						if matches!(control.kind, ControlKind::WheelGroup(_)) {
+							SharedString::default()
+						} else {
+							SharedString::from(control.display_name.clone())
+						},
+					);
 				let widget = match &control.kind {
 					ControlKind::Slider(slider) => {
 						div().flex_1().child(slider.clone()).into_any_element()
@@ -1278,6 +1434,28 @@ impl<E: AppEngine> Render for OfxParamsView<E> {
 					}
 					ControlKind::Color(picker) => {
 						div().flex_1().child(picker.clone()).into_any_element()
+					}
+					ControlKind::WheelGroup(wheels) => {
+						// The three-way wheels replace the label column: one
+						// wheel per band, captioned beneath (阴影/中间调/高光).
+						let mut row = div().flex_1().flex().gap_2();
+						for (wheel, _, label) in wheels {
+							row = row.child(
+								div()
+									.flex()
+									.flex_col()
+									.items_center()
+									.gap_1()
+									.child(wheel.clone())
+									.child(
+										div()
+											.text_xs()
+											.text_color(colors.disabled)
+											.child(label.clone()),
+									),
+							);
+						}
+						row.into_any_element()
 					}
 					ControlKind::Text { editor, multiline: _ } => {
 						let engine = self.engine.clone();
@@ -3518,6 +3696,7 @@ mod tests {
 							"text"
 						}
 					}
+					ControlKind::WheelGroup(_) => "wheel-group",
 					ControlKind::Curve(_) => "curve",
 					ControlKind::PushButton => "button",
 					ControlKind::ReadOnly(_) => "readonly",
@@ -4499,6 +4678,20 @@ mod tests {
 		gpui_kit::WindowHandle<ParamsHost>,
 		Entity<OfxParamsView<MockEngine>>,
 	) {
+		open_params_view_for(cx, EffectId(900), width, height)
+	}
+
+	/// [`open_params_view`] for a specific mock effect id (901 is the
+	/// canned three-way corrector).
+	fn open_params_view_for(
+		cx: &mut TestAppContext,
+		effect: EffectId,
+		width: f32,
+		height: f32,
+	) -> (
+		gpui_kit::WindowHandle<ParamsHost>,
+		Entity<OfxParamsView<MockEngine>>,
+	) {
 		cx.update(|cx| {
 			gpui_kit::init(cx);
 			cx.init_colors();
@@ -4506,7 +4699,7 @@ mod tests {
 		let window = cx.open_window(size(px(width), px(height)), |window, cx| {
 			let engine = cx.new(MockEngine::create);
 			let view =
-				cx.new(|cx| OfxParamsView::<MockEngine>::new(EffectId(900), engine, window, cx));
+				cx.new(|cx| OfxParamsView::<MockEngine>::new(effect, engine, window, cx));
 			ParamsHost { view }
 		});
 		cx.run_until_parked();
@@ -4580,6 +4773,7 @@ mod tests {
 							"text"
 						}
 					}
+					ControlKind::WheelGroup(_) => "wheel-group",
 					ControlKind::Curve(_) => "curve",
 					ControlKind::PushButton => "button",
 					ControlKind::ReadOnly(_) => "readonly",
@@ -4587,6 +4781,42 @@ mod tests {
 				(c.input_id.clone(), kind.to_string())
 			})
 			.collect()
+	}
+
+	/// The three-way corrector's colour params render as grading wheels
+	/// (one per tonal band, captions beneath), the amounts stay sliders,
+	/// and a wheel drag writes the band's colour param to the engine.
+	#[gpui_kit::test]
+	async fn three_way_color_gets_grading_wheels(cx: &mut TestAppContext) {
+		let (window, view) = open_params_view_for(cx, EffectId(901), 420.0, 900.0);
+		let visual = gpui_kit::VisualTestContext::from_window(window.into(), cx).into_mut();
+		visual.update(|window, cx| {
+			window.draw(cx).clear(cx);
+		});
+
+		// The control set: one wheel group, then the three amount sliders —
+		// no generic colour pickers for the band colours.
+		let kinds = cx.read(|app| control_kinds(&view, app));
+		assert_eq!(
+			kinds.iter().map(|(_, k)| k.as_str()).collect::<Vec<_>>(),
+			vec!["wheel-group", "slider", "slider", "slider"],
+			"the wheel group replaces the three pickers: {kinds:?}"
+		);
+		let wheel = visual.debug_bounds("color-wheel-0").expect("shadows wheel");
+		let center = wheel.center();
+		visual.simulate_click(
+			point(center.x + px(f32::from(wheel.size.width) * 0.45), center.y),
+			Modifiers::default(),
+		);
+		cx.run_until_parked();
+
+		// The click drove the shadows colour red-ward (rim right = 0° hue).
+		let attempts = cx.read(|app| view.read(app).engine.read(app).effect_param_attempts());
+		let write = attempts
+			.iter()
+			.find(|(_, id, value)| id == "shadows_color_in" && value.starts_with("Color"))
+			.expect("a colour write for the shadows band");
+		assert!(write.2.contains("0.9") || write.2.contains("1.0"), "red-ward: {write:?}");
 	}
 
 	/// `build_control` maps every value type to its widget (or read-only
@@ -4910,6 +5140,7 @@ mod tests {
 						ControlKind::Combo(c) => {
 							c.update(cx, |c, cx| c.set_selected(Some(99), cx));
 						}
+						ControlKind::WheelGroup(_) => {}
 						ControlKind::Spin(spins) => {
 							for (s, _) in spins {
 								s.update(cx, |s, cx| {

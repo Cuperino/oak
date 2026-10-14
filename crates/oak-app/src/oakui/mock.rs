@@ -1577,6 +1577,35 @@ impl AppEngine for MockEngine {
 		// flag: a real node's hidden inputs are dropped by the facade's
 		// `effect_params` before they get here, and the view must skip them
 		// on its own too (plugin and mock engines can hand them over).
+		// A canned three-way corrector parameter list behind id 901 (the
+		// shadows/midtones/highlights colour + amount shape), so the params
+		// view's wheel group has a fixture.
+		if effect.0 == 901 {
+			use oak_node::value::{NodeValue, ValueType};
+			let color = NodeValue::Color([0.5, 0.5, 0.5, 1.0]);
+			let amount = NodeValue::Float(1.0);
+			let mk = |input_id: &str, display_name: &str, value: NodeValue| {
+				crate::oakui::engine::EffectParam {
+					input_id: input_id.to_string(),
+					display_name: display_name.to_string(),
+					value_type: match value {
+						NodeValue::Color(_) => ValueType::Color,
+						_ => ValueType::Float,
+					},
+					value,
+					flags: 0,
+					properties: Vec::new(),
+				}
+			};
+			return Some(vec![
+				mk("shadows_color_in", "Shadows", color.clone()),
+				mk("midtones_color_in", "Midtones", color.clone()),
+				mk("highlights_color_in", "Highlights", color.clone()),
+				mk("shadows_amount_in", "Shadows Amount", amount.clone()),
+				mk("midtones_amount_in", "Midtones Amount", amount.clone()),
+				mk("highlights_amount_in", "Highlights Amount", amount.clone()),
+			]);
+		}
 		(effect.0 == 900).then(|| {
 			use oak_node::input::flags::{ARRAY, HIDDEN};
 			use oak_node::value::{NodeValue, ValueType};

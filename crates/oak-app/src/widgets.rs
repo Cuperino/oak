@@ -22,6 +22,7 @@
 //! `component::dock` replaces it.
 
 pub mod audio_meter;
+pub mod color_wheel;
 pub mod curve_editor;
 pub mod dialog;
 pub mod effect_stack;
