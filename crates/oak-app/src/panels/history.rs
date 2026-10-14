@@ -163,7 +163,10 @@ impl<E: AppEngine> Render for HistoryPanel<E> {
 					.py_1()
 					.cursor_pointer()
 					.when(is_selected, |el| el.bg(colors.selected))
-					.on_click(cx.listener(move |this, _event: &gpui::ClickEvent, _window, cx| {
+					.when(!is_selected, |el| {
+						el.hover(|style| style.bg(crate::widgets::theme::row_hover(&colors)))
+					})
+					.on_click(cx.listener(move |this, _event: &gpui_kit::ClickEvent, _window, cx| {
 						// A left click jumps to this row (the C++
 						// currentRowChanged → oakengine_undo_jump(row+1)).
 						this.engine

@@ -181,13 +181,14 @@ impl<E: AppEngine> Render for ProjectManager<E> {
 
 		// Toolbar buttons (新建 / 导入) and the selection-targeting action
 		// row (打开 / 重命名 / 复制 / 删除 / 导出).
-		let tool = |id: &'static str, label: &'static str| -> gpui::Stateful<gpui::Div> {
+		let tool = |id: &'static str, label: &'static str| -> gpui_kit::Stateful<gpui_kit::Div> {
 			div()
 				.id(id)
 				.px_3()
 				.py_1()
 				.rounded_md()
 				.bg(colors.background)
+				.hover(|style| style.bg(crate::widgets::theme::neutral_hover(&colors)))
 				.border_1()
 				.border_color(colors.border)
 				.text_color(colors.text)
@@ -195,11 +196,12 @@ impl<E: AppEngine> Render for ProjectManager<E> {
 				.child(label)
 		};
 		let has_selection = self.selected.is_some();
-		let action = |id: &'static str, label: &'static str| -> gpui::Stateful<gpui::Div> {
+		let action = |id: &'static str, label: &'static str| -> gpui_kit::Stateful<gpui_kit::Div> {
 			let mut b = div().id(id).px_3().py_1().rounded_md();
 			if has_selection {
 				b = b
 					.bg(colors.background)
+					.hover(|style| style.bg(crate::widgets::theme::neutral_hover(&colors)))
 					.border_1()
 					.border_color(colors.border)
 					.text_color(colors.text)
@@ -283,14 +285,16 @@ impl<E: AppEngine> Render for ProjectManager<E> {
 									line =
 										line.bg(colors.selected).text_color(colors.selected_text);
 								} else {
-									line = line.text_color(colors.text);
+									line = line.text_color(colors.text).hover(|style| {
+										style.bg(crate::widgets::theme::row_hover(&colors))
+									});
 								}
-								let cell = |text: String, width: f32| -> gpui::Div {
+								let cell = |text: String, width: f32| -> gpui_kit::Div {
 									let mut c = div().px_2().whitespace_nowrap().child(text);
 									if width <= 0.0 {
 										c = c.flex_1();
 									} else {
-										c = c.w(gpui::px(width)).text_right();
+										c = c.w(gpui_kit::px(width)).text_right();
 									}
 									c
 								};

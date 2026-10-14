@@ -1000,7 +1000,12 @@ impl<E: AppEngine> Render for TimelinePanel<E> {
 					.flex()
 					.items_center()
 					.justify_center()
+					.rounded_sm()
 					.cursor_pointer()
+					.hover({
+						let hover = colors.container;
+						move |style| style.bg(hover)
+					})
 					.tooltip(move |window, cx| {
 						tooltip_view(i18n::tr("timeline.snap").into(), window, cx)
 					})

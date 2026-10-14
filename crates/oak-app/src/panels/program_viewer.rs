@@ -570,6 +570,13 @@ impl<E: AppEngine> ProgramViewerPanel<E> {
 			} else {
 				colors.container
 			})
+			.hover(|style| {
+				if active {
+					style.bg(crate::widgets::theme::accent_hover(&colors))
+				} else {
+					style.bg(crate::widgets::theme::neutral_hover(&colors))
+				}
+			})
 			.text_color(colors.text)
 			.cursor_pointer()
 			.child(label)

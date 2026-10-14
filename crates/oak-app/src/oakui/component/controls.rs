@@ -291,19 +291,21 @@ impl Render for Slider {
 		}));
 
 		let mut track = div()
-			.id(gpui::ElementId::named_usize("oak-slider", control))
+			.id(gpui_kit::ElementId::named_usize("oak-slider", control))
+			.debug_selector(move || format!("oak-slider-{control}"))
 			.flex_1()
 			.h(px(18.0))
 			.relative()
 			.rounded_md()
 			.bg(colors.container)
+			.hover(|style| style.bg(crate::widgets::theme::neutral_hover(&colors)))
 			.track_focus(&self.focus)
 			.cursor_pointer()
 			.on_drag(drag_payload.clone(), |_payload, _offset, _window, cx| {
 				cx.new(|_| SliderDragGhost)
 			})
 			.on_drag_move(
-				cx.listener(|this, event: &gpui::DragMoveEvent<std::sync::Arc<std::sync::RwLock<SliderDrag>>>, _window, cx| {
+				cx.listener(|this, event: &gpui_kit::DragMoveEvent<std::sync::Arc<std::sync::RwLock<SliderDrag>>>, _window, cx| {
 					{
 						let mut drag = event.drag(cx).write().unwrap();
 						if drag.control != this.control {
@@ -674,21 +676,26 @@ impl Render for CheckBox {
 			.items_center()
 			.gap_1()
 			.cursor_pointer()
+			.group(format!("oak-checkbox-{control}"))
 			.child(
 				div()
 					.size(px(16.0))
 					.rounded_md()
 					.border_1()
 					.border_color(checkbox_border(&colors, checked))
+					.group_hover(
+						format!("oak-checkbox-{control}"),
+						|style| style.border_color(colors.selected),
+					)
 					.bg(checkbox_fill(&colors, checked))
 					.shadow(if checked {
 						vec![]
 					} else {
 						// Inset shadow makes the unchecked box read as an
 						// empty well on the dark panel.
-						vec![gpui::BoxShadow {
-							color: gpui::Hsla { h: 0.0, s: 0.0, l: 0.0, a: 0.25 },
-							offset: gpui::Point::new(px(0.0), px(1.0)),
+						vec![gpui_kit::BoxShadow {
+							color: gpui_kit::Hsla { h: 0.0, s: 0.0, l: 0.0, a: 0.25 },
+							offset: gpui_kit::Point::new(px(0.0), px(1.0)),
 							blur_radius: px(2.0),
 							spread_radius: px(0.0),
 							inset: true,
@@ -864,6 +871,7 @@ impl Render for ComboBox {
 			.border_1()
 			.border_color(colors.border)
 			.bg(colors.background)
+			.hover(|style| style.border_color(colors.selected))
 			.px_2()
 			.py_1()
 			.track_focus(&self.focus)
@@ -960,6 +968,14 @@ impl Render for ComboBox {
 								colors.text
 							})
 							.cursor_pointer()
+							// The highlight follows the mouse (standard combo
+							// behaviour; Enter then commits the hovered row).
+							.on_mouse_move(cx.listener(move |this, _event: &gpui_kit::MouseMoveEvent, _window, cx| {
+								if this.highlight != i {
+									this.highlight = i;
+									cx.notify();
+								}
+							}))
 							.on_mouse_down(
 								MouseButton::Left,
 								{

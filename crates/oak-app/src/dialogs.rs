@@ -800,6 +800,7 @@ impl Render for PreferencesContent {
 							.py_1()
 							.rounded_md()
 							.bg(colors.background)
+							.hover(|style| style.bg(crate::widgets::theme::neutral_hover(&colors)))
 							.border_1()
 							.border_color(colors.border)
 							.text_color(colors.text)
@@ -878,6 +879,7 @@ impl Render for PreferencesContent {
 							.py_1()
 							.rounded_md()
 							.bg(colors.background)
+							.hover(|style| style.bg(crate::widgets::theme::neutral_hover(&colors)))
 							.border_1()
 							.border_color(colors.border)
 							.text_color(colors.text)
@@ -2179,25 +2181,26 @@ impl<E: crate::oakui::engine::AppEngine> Render for ProjectPropertiesContent<E> 
 			.py_1()
 			.rounded_md()
 			.bg(colors.background)
+			.hover(|style| style.bg(crate::widgets::theme::neutral_hover(&colors)))
 			.border_1()
 			.border_color(colors.border)
 			.text_color(colors.text)
 			.cursor_pointer()
 			.on_click(
-				cx.listener(move |_this, _event: &gpui::ClickEvent, _window, cx| {
+				cx.listener(move |_this, _event: &gpui_kit::ClickEvent, _window, cx| {
 					let receiver = cx.prompt_for_paths(PathPromptOptions {
 						files: true,
 						directories: false,
 						multiple: false,
 						prompt: None,
-						allowed_extensions: Vec::new(),
 					});
 					cx.spawn(async move |this, cx| {
 						if let Ok(Ok(Some(paths))) = receiver.await {
 							if let Some(path) = paths.first() {
 								let path = path.to_string_lossy().into_owned();
-								let _ =
-									this.update(cx, |this, cx| this.set_ocio_config_path(path, cx));
+								let _ = this.update_in(cx, |this, window, cx| {
+								this.set_ocio_config_path(path, window, cx);
+							});
 							}
 						}
 					})
@@ -2412,6 +2415,13 @@ fn tab_button(
 		} else {
 			transparent()
 		})
+		.hover(|style| {
+			if selected {
+				style.bg(crate::widgets::theme::accent_hover(&colors))
+			} else {
+				style.bg(crate::widgets::theme::neutral_hover(&colors))
+			}
+		})
 		.text_color(if selected {
 			colors.selected_text
 		} else {
@@ -2429,9 +2439,10 @@ fn tab_button(
 fn pill_button(
 	id: &'static str,
 	label: impl Into<SharedString>,
-	bg: gpui::Rgba,
-	fg: gpui::Rgba,
-) -> gpui::Stateful<gpui::Div> {
+	bg: gpui_kit::Rgba,
+	hover_bg: gpui_kit::Rgba,
+	fg: gpui_kit::Rgba,
+) -> gpui_kit::Stateful<gpui_kit::Div> {
 	let label: SharedString = label.into();
 	div()
 		.id(id)
@@ -2440,6 +2451,7 @@ fn pill_button(
 		.rounded_md()
 		.cursor_pointer()
 		.bg(bg)
+		.hover(move |style| style.bg(hover_bg))
 		.text_color(fg)
 		.child(label)
 }
@@ -2807,6 +2819,7 @@ impl Render for KeyboardTabContent {
 								colors.border
 							})
 							.bg(colors.background)
+							.hover(|style| style.border_color(colors.selected))
 							.text_color(colors.text)
 							.cursor_pointer()
 							.track_focus(&focus)
@@ -2839,6 +2852,7 @@ impl Render for KeyboardTabContent {
 						"prefs-keyboard-confirm-reset",
 						i18n::tr("preferences.keyboard.reset_all"),
 						colors.selected,
+						crate::widgets::theme::accent_hover(&colors),
 						colors.selected_text,
 					)
 					.on_click(cx.listener(|this, _event, _window, cx| this.reset_all(cx))),
@@ -2848,6 +2862,7 @@ impl Render for KeyboardTabContent {
 						"prefs-keyboard-cancel-reset",
 						i18n::tr("dialog.cancel"),
 						colors.background,
+						crate::widgets::theme::neutral_hover(&colors),
 						colors.text,
 					)
 					.on_click(cx.listener(|this, _event, _window, cx| {
@@ -2865,6 +2880,7 @@ impl Render for KeyboardTabContent {
 						"prefs-keyboard-import",
 						i18n::tr("preferences.keyboard.import"),
 						colors.background,
+						crate::widgets::theme::neutral_hover(&colors),
 						colors.text,
 					)
 					.on_click(cx.listener(|this, _event, _window, cx| this.import_shortcuts(cx))),
@@ -2874,6 +2890,7 @@ impl Render for KeyboardTabContent {
 						"prefs-keyboard-export",
 						i18n::tr("preferences.keyboard.export"),
 						colors.background,
+						crate::widgets::theme::neutral_hover(&colors),
 						colors.text,
 					)
 					.on_click(cx.listener(|this, _event, _window, cx| this.export_shortcuts(cx))),
@@ -2884,6 +2901,7 @@ impl Render for KeyboardTabContent {
 						"prefs-keyboard-reset-selected",
 						i18n::tr("preferences.keyboard.reset_selected"),
 						colors.background,
+						crate::widgets::theme::neutral_hover(&colors),
 						colors.text,
 					)
 					.on_click(cx.listener(|this, _event, _window, cx| this.reset_selected(cx))),
@@ -2893,6 +2911,7 @@ impl Render for KeyboardTabContent {
 						"prefs-keyboard-reset-all",
 						i18n::tr("preferences.keyboard.reset_all"),
 						colors.background,
+						crate::widgets::theme::neutral_hover(&colors),
 						colors.text,
 					)
 					.on_click(cx.listener(|this, _event, _window, cx| this.reset_all(cx))),
@@ -3178,6 +3197,13 @@ impl Render for ActionSearchContent {
 							colors.selected
 						} else {
 							transparent()
+						})
+						.hover(|style| {
+							if row_selected {
+								style
+							} else {
+								style.bg(crate::widgets::theme::row_hover(&colors))
+							}
 						})
 						.text_color(if row_selected {
 							colors.selected_text
