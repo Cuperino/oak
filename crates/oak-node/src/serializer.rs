@@ -712,9 +712,20 @@ fn load_node(
 		id_map.insert(ptr, id);
 	}
 
-	// Parse the node body (into the entry's core and behavior).
+	// Parse the node body (into the entry's core and behavior). The file's
+	// `ptr` goes down with it: deferred links are keyed by file
+	// identities, which diverge from the runtime identity a fresh load
+	// assigns whenever the saved session reused arena slots.
 	let entry = graph.get_mut(id).ok_or(Error::NotFound)?;
-	load_node_body(reader, &mut entry.core, &mut *entry.behavior, id, connections, links)?;
+	load_node_body(
+		reader,
+		&mut entry.core,
+		&mut *entry.behavior,
+		id,
+		ptr,
+		connections,
+		links,
+	)?;
 
 	Ok(id)
 }
@@ -753,6 +764,7 @@ fn load_node_body(
 	core: &mut NodeCore,
 	behavior: &mut dyn crate::node::NodeBehavior,
 	node_id: NodeId,
+	node_ptr: Option<u64>,
 	connections: &mut Vec<(u64, NodeId, String, i32)>,
 	links: &mut Vec<(u64, u64)>,
 ) -> crate::error::Result<()> {
@@ -770,7 +782,15 @@ fn load_node_body(
 				while reader.next_start_element() {
 					if reader.name() == "link" {
 						if let Ok(identity) = reader.read_element_text().trim().parse::<u64>() {
-							links.push((node_id.identity(), identity));
+							// Key the deferred pair by the FILE's `ptr`
+							// identities: the runtime identity of the
+							// freshly-loaded node is a different number
+							// whenever the saved session reused arena
+							// slots, and resolving by it silently drops
+							// the link.
+							if let Some(a) = node_ptr {
+								links.push((a, identity));
+							}
 						}
 					} else {
 						reader.skip_current_element();

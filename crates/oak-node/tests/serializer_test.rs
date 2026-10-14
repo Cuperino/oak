@@ -1381,3 +1381,76 @@ fn legacy_project_without_endpoints_migrates_on_load() {
 		Some(li)
 	);
 }
+
+/// Regression: clip links must survive save/load even when the file's
+/// `ptr` identities no longer match the loading graph's runtime
+/// identities. Deleting a node bumps the arena generation on slot reuse
+/// (and leaves a gap meanwhile), so the runtime identity a fresh load
+/// assigns differs from the saved `ptr`. The loader keyed the deferred
+/// link pair by the *runtime* identity of the node being parsed, which
+/// resolved to nothing whenever the numbers diverged — linked clips
+/// came back from project reopen ungrouped.
+#[test]
+fn link_round_trip_survives_identity_shift() {
+	use oak_node::project::Project;
+
+	let project = Project::new();
+	{
+		let mut p = project.lock().unwrap();
+		p.initialize().unwrap();
+		// Create two throwaway nodes and only then remove both, so the two
+		// linked nodes below reuse both freed slots with generation-bumped
+		// identities a fresh load cannot reproduce (removing each right
+		// after creating it lets the second trash reuse the first's slot,
+		// and one side of the link accidentally still resolves).
+		let mut trashes = Vec::new();
+		for _ in 0..2 {
+			let (core, behavior) = (oak_node::factory::Factory::global()
+				.find("org.olivevideoeditor.Olive.math")
+				.unwrap()
+				.create)();
+			trashes.push(p.graph.add_node(core, behavior));
+		}
+		for trash in trashes {
+			p.graph.remove_node(trash);
+		}
+		// Two linked nodes (the clip pair stand-in).
+		let (core, behavior) = (oak_node::factory::Factory::global()
+			.find("org.olivevideoeditor.Olive.math")
+			.unwrap()
+			.create)();
+		let a = p.graph.add_node(core, behavior);
+		p.graph.get_mut(a).unwrap().core.label = "link-a".into();
+		let (core, behavior) = (oak_node::factory::Factory::global()
+			.find("org.olivevideoeditor.Olive.math")
+			.unwrap()
+			.create)();
+		let b = p.graph.add_node(core, behavior);
+		p.graph.get_mut(b).unwrap().core.label = "link-b".into();
+		p.graph.link(a, b);
+	}
+
+	let xml = {
+		let p = project.lock().unwrap();
+		oak_node::serializer::save(&p).unwrap()
+	};
+	let loaded = oak_node::serializer::load(&xml).unwrap();
+	let l = loaded.lock().unwrap();
+	let by_label = |label: &str| {
+		l.graph
+			.node_ids()
+			.into_iter()
+			.find(|id| l.graph.get(*id).map(|e| e.core.label.as_str()) == Some(label))
+			.unwrap_or_else(|| panic!("loaded project has a node labelled {label}"))
+	};
+	let la = by_label("link-a");
+	let lb = by_label("link-b");
+	assert!(
+		l.graph.are_linked(la, lb),
+		"the link survives an identity-shifting round-trip"
+	);
+	assert!(
+		l.graph.are_linked(lb, la),
+		"the link survives symmetrically"
+	);
+}
