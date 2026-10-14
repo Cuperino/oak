@@ -97,6 +97,14 @@ opt-level = 1
 # The fork carries all three fixes; return to the crates.io release once it
 # does (the ocio-rs patch pulls the fork's `ocio-sys` path dependency too).
 [patch.crates-io]
+# 10-bit display path (docs/zh/gpui-kit-migration.md): minimal renderer
+# patches vendored from the registry snapshots. gpui-pre gains
+# `SurfaceSource::Texture` + `Window::gpu_context`, gpui-pre-linux exposes
+# the window renderer's device/queue, gpui-pre-wgpu prefers 10-bit
+# swapchain formats and paints external textures.
+gpui-pre = { path = "vendor/gpui-pre" }
+gpui-pre-linux = { path = "vendor/gpui-pre-linux" }
+gpui-pre-wgpu = { path = "vendor/gpui-pre-wgpu" }
 ocio-rs = { git = "https://github.com/Mike-Solar/ocio-rs.git", rev = "30338c6a169bbbada862fb3ac256e79b656159cf" }
 # pipewire-rs 0.10's build scripts run bindgen with `clang_macro_fallback`
 # using *cwd-relative* scratch paths (.macro_eval.c / *.pch); with clang >= 23
@@ -106,3 +114,4 @@ ocio-rs = { git = "https://github.com/Mike-Solar/ocio-rs.git", rev = "30338c6a16
 # (absolute); drop the patch once upstream does the same.
 libspa-sys = { path = "vendor/libspa-sys" }
 pipewire-sys = { path = "vendor/pipewire-sys" }
+
